@@ -1344,7 +1344,18 @@ async function piRun() {
   $('#pi_insertBtn').style.display = 'none';
   piSetStatus(10, '선택한 부분 준비 중…');
 
-  const cropped = cropAndUpscale(pi.img, pi.sel, 200);
+  // 선택 상자 가장자리가 글자를 딱 걸치듯 자르면 그 글자를 엉뚱한 기호로
+  // 잘못 읽는 경우가 많아, 사방으로 살짝 여백을 더 준 뒤 잘라낸다.
+  const padX = Math.round(pi.sel.w * 0.06) + 6;
+  const padY = Math.round(pi.sel.h * 0.10) + 6;
+  const paddedSel = {
+    x: Math.max(0, pi.sel.x - padX),
+    y: Math.max(0, pi.sel.y - padY),
+    w: Math.min(pi.img.width, pi.sel.x + pi.sel.w + padX) - Math.max(0, pi.sel.x - padX),
+    h: Math.min(pi.img.height, pi.sel.y + pi.sel.h + padY) - Math.max(0, pi.sel.y - padY),
+  };
+
+  const cropped = cropAndUpscale(pi.img, paddedSel, 200);
 
   let worker = null;
   try {
