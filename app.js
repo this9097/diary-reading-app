@@ -610,163 +610,107 @@ function stopVoice() {
 }
 
 /* =====================================================================
-   PHOTO HIGHLIGHT IMPORT (사진 속 형광펜 표시 → 텍스트)
+   PHOTO 문장 가져오기 (사용자가 직접 드래그로 선택한 영역만 OCR)
    ===================================================================== */
-const pi = { img: null, chosenHue: 'auto' };
+const pi = { img: null, displayScale: 1, sel: null, dragging: false, startX: 0, startY: 0 };
 
-function rgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0, s = 0; const l = (max + min) / 2;
-  const d = max - min;
-  if (d !== 0) {
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = ((g - b) / d + (g < b ? 6 : 0)); break;
-      case g: h = ((b - r) / d + 2); break;
-      case b: h = ((r - g) / d + 4); break;
+function piLoadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function piSetStatus(pct, label) {
+  $('#pi_progress').style.display = 'block';
+  $('#pi_progress_fill').style.width = pct + '%';
+  $('#pi_progress_label').textContent = label;
+}
+
+function piDrawImage() {
+  const wrap = $('#pi_imgwrap');
+  const canvas = $('#pi_dispCanvas');
+  const maxW = Math.min(wrap.parentElement.clientWidth || 600, 640);
+  const scale = Math.min(1, maxW / pi.img.width);
+  canvas.width = Math.round(pi.img.width * scale);
+  canvas.height = Math.round(pi.img.height * scale);
+  pi.displayScale = scale;
+  canvas.getContext('2d').drawImage(pi.img, 0, 0, canvas.width, canvas.height);
+  wrap.style.display = 'block';
+  $('#pi_hint').style.display = 'block';
+}
+
+function piWrapPoint(ev) {
+  const wrap = $('#pi_imgwrap');
+  const rect = wrap.getBoundingClientRect();
+  const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+  const y = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
+  return { x, y };
+}
+
+function piUpdateSelBoxVisual(x0, y0, x1, y1) {
+  const box = $('#pi_selbox');
+  const left = Math.min(x0, x1), top = Math.min(y0, y1);
+  const w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
+  box.style.left = left + 'px';
+  box.style.top = top + 'px';
+  box.style.width = w + 'px';
+  box.style.height = h + 'px';
+  box.style.display = 'block';
+}
+
+function piWireSelection() {
+  const wrap = $('#pi_imgwrap');
+
+  const onDown = (ev) => {
+    if (!pi.img) return;
+    wrap.setPointerCapture?.(ev.pointerId);
+    const p = piWrapPoint(ev);
+    pi.dragging = true;
+    pi.startX = p.x; pi.startY = p.y;
+    piUpdateSelBoxVisual(p.x, p.y, p.x, p.y);
+  };
+  const onMove = (ev) => {
+    if (!pi.dragging) return;
+    const p = piWrapPoint(ev);
+    piUpdateSelBoxVisual(pi.startX, pi.startY, p.x, p.y);
+  };
+  const onUp = (ev) => {
+    if (!pi.dragging) return;
+    pi.dragging = false;
+    const p = piWrapPoint(ev);
+    const dispX0 = Math.min(pi.startX, p.x), dispY0 = Math.min(pi.startY, p.y);
+    const dispW = Math.abs(p.x - pi.startX), dispH = Math.abs(p.y - pi.startY);
+    if (dispW < 14 || dispH < 10) {
+      // 너무 작은 선택은 무시(실수로 살짝 터치한 경우)
+      $('#pi_selbox').style.display = pi.sel ? 'block' : 'none';
+      return;
     }
-    h *= 60;
-  }
-  return [h, s, l];
+    // 화면 표시 좌표 → 원본 이미지 좌표로 환산
+    pi.sel = {
+      x: Math.round(dispX0 / pi.displayScale),
+      y: Math.round(dispY0 / pi.displayScale),
+      w: Math.round(dispW / pi.displayScale),
+      h: Math.round(dispH / pi.displayScale),
+    };
+    $('#pi_runBtn').disabled = false;
+  };
+
+  wrap.addEventListener('pointerdown', onDown);
+  wrap.addEventListener('pointermove', onMove);
+  wrap.addEventListener('pointerup', onUp);
+  wrap.addEventListener('pointercancel', onUp);
 }
 
-function chroma(r, g, b) { return Math.max(r, g, b) - Math.min(r, g, b); }
-
-function detectAutoHue(data, w, h) {
-  const bins = new Array(36).fill(0);
-  for (let i = 0; i < data.length; i += 4 * 7) { // sample every ~7th pixel for speed
-    const [hh, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
-    // 살구색/피부색(대략 5~35도)은 채도가 낮아도 형광펜처럼 잡히기 쉬워
-    // 자동감지 후보에서 아예 제외한다. 정말 주황 형광펜이면 수동으로 '주황'을 고르면 됨.
-    const isSkinish = hh >= 5 && hh <= 35;
-    const c = chroma(data[i], data[i + 1], data[i + 2]);
-    if (!isSkinish && s > 0.45 && c > 55 && l > 0.4 && l < 0.9) bins[Math.floor(hh / 10) % 36]++;
-  }
-  let best = 0, bestCount = -1;
-  bins.forEach((c, i) => { if (c > bestCount) { bestCount = c; best = i; } });
-  return bestCount > 0 ? best * 10 + 5 : null;
-}
-
-function buildHighlightMask(data, w, h, targetHue) {
-  const mask = new Uint8Array(w * h);
-  const tol = 22; // 색상 허용 오차(도)
-  for (let p = 0, i = 0; i < data.length; i += 4, p++) {
-    const [hh, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
-    let dh = Math.abs(hh - targetHue);
-    if (dh > 180) dh = 360 - dh;
-    const c = chroma(data[i], data[i + 1], data[i + 2]);
-    // 채도(s)뿐 아니라 실제 색 대비(chroma)도 함께 요구해서,
-    // 조명 때문에 살짝 누렇게 뜬 흰 종이가 형광펜으로 오인되지 않게 한다.
-    if (dh <= tol && s > 0.35 && c > 45 && l > 0.32 && l < 0.96) mask[p] = 1;
-  }
-  return mask;
-}
-
-function dilateMask(mask, w, h, iterations) {
-  let cur = mask;
-  for (let it = 0; it < iterations; it++) {
-    const next = new Uint8Array(w * h);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const idx = y * w + x;
-        if (cur[idx]) { next[idx] = 1; continue; }
-        let on = false;
-        for (let dy = -1; dy <= 1 && !on; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            const ny = y + dy, nx = x + dx;
-            if (ny >= 0 && ny < h && nx >= 0 && nx < w && cur[ny * w + nx]) { on = true; break; }
-          }
-        }
-        if (on) next[idx] = 1;
-      }
-    }
-    cur = next;
-  }
-  return cur;
-}
-
-// 마스크가 있는 가로 줄들을 찾아서, 형광펜이 칠해진 '띠(band)' 단위로 묶는다.
-// 픽셀 단위로 지우는 대신 줄 단위 사각형을 원본에서 그대로 잘라 쓰기 때문에
-// 글자 획이 중간에 끊기지 않는다.
-// 또한 본문 옆 여백에 '세로줄'로만 표시해둔 경우(형광펜이 글자 위가 아니라
-// 옆 여백에 세로로 그어진 경우)를 감지해서, 그 옆에 있는 문단 전체 줄을
-// 포함하도록 가로 범위를 넓혀준다.
-function findHighlightBands(mask, w, h, opts) {
-  const { mergeGapPx, minRowHits, padY, padX } = opts;
-  const rowHits = new Array(h).fill(0);
-  for (let y = 0; y < h; y++) {
-    let c = 0;
-    const base = y * w;
-    for (let x = 0; x < w; x++) c += mask[base + x];
-    rowHits[y] = c;
-  }
-  const active = rowHits.map(c => c >= minRowHits);
-
-  const raw = [];
-  let start = -1;
-  for (let y = 0; y < h; y++) {
-    if (active[y] && start === -1) start = y;
-    if (!active[y] && start !== -1) { raw.push([start, y - 1]); start = -1; }
-  }
-  if (start !== -1) raw.push([start, h - 1]);
-
-  // 가까운 줄끼리 합치기
-  const merged = [];
-  for (const [s, e] of raw) {
-    if (merged.length && s - merged[merged.length - 1][1] <= mergeGapPx) {
-      merged[merged.length - 1][1] = e;
-    } else merged.push([s, e]);
-  }
-
-  const bands = merged.map(([y0, y1]) => {
-    let minX = w, maxX = -1;
-    for (let y = y0; y <= y1; y++) {
-      const base = y * w;
-      for (let x = 0; x < w; x++) {
-        if (mask[base + x]) { if (x < minX) minX = x; if (x > maxX) maxX = x; }
-      }
-    }
-    if (maxX < 0) return null;
-
-    let strength = 0;
-    for (let y = y0; y <= y1; y++) strength += rowHits[y];
-
-    const barRatio = (maxX - minX) / w;
-    let x0, x1;
-    if (barRatio < 0.15) {
-      // 표시된 색 너비가 좁다 → 글자 위가 아니라 옆 여백에 그은 '세로줄 표시'로 판단.
-      // 표시가 있는 쪽 반대편(문단이 있는 쪽)으로 가로 범위를 넓게 잡는다.
-      const barCenter = (minX + maxX) / 2;
-      if (barCenter < w / 2) {
-        x0 = Math.max(0, minX - padX);
-        x1 = Math.min(w, Math.round(w * 0.97));
-      } else {
-        x0 = Math.max(0, Math.round(w * 0.03));
-        x1 = Math.min(w, maxX + padX);
-      }
-    } else {
-      x0 = Math.max(0, minX - padX);
-      x1 = Math.min(w, maxX + padX);
-    }
-
-    const yy0 = Math.max(0, y0 - padY), yy1 = Math.min(h, y1 + padY);
-    return { x: x0, y: yy0, w: x1 - x0, h: yy1 - yy0, strength, rowSpan: y1 - y0 + 1 };
-  }).filter(Boolean);
-
-  if (!bands.length) return [];
-
-  // 아주 작은 잡티(피부색·조명 반사 등으로 잘못 걸린 점 몇 개)를 걸러낸다:
-  // 실제 형광펜 줄에 비해 색칠된 양이 너무 적거나, 세로 폭이 너무 좁으면 노이즈로 간주.
-  const maxStrength = Math.max(...bands.map(b => b.strength));
-  const filtered = bands.filter(b => b.rowSpan >= 8 && b.strength >= maxStrength * 0.25);
-  if (filtered.length) return filtered.slice(0, 3);
-  const strongest = bands.reduce((a, b) => (b.strength > a.strength ? b : a), bands[0]);
-  return [strongest];
-}
-
-// 자르기만 하고(색은 원본 그대로), 살짝 대비만 올려서 OCR 정확도를 높인다.
-// 예전처럼 임계값으로 흑/백을 강제로 나누면 획이 끊겨서 오히려 인식률이 떨어졌다.
+// 자르기만 하고 원본 색은 유지, 밝기 대비만 살짝 보정 — 인식률에 가장 중요한 건
+// 색을 억지로 흑/백으로 나누는 게 아니라 충분한 해상도와 자연스러운 대비.
 function enhanceForOcr(canvas) {
   const ctx = canvas.getContext('2d');
   const { width: w, height: h } = canvas;
@@ -790,7 +734,7 @@ function enhanceForOcr(canvas) {
 }
 
 // 잘라낸 조각이 너무 작으면 OCR 정확도가 크게 떨어지므로, 글자 높이가 넉넉해지도록 확대
-function cropAndUpscale(srcCanvas, box, targetMinHeight) {
+function cropAndUpscale(srcImg, box, targetMinHeight) {
   const scale = box.h < targetMinHeight ? targetMinHeight / box.h : 1;
   const outW = Math.round(box.w * scale), outH = Math.round(box.h * scale);
   const out = document.createElement('canvas');
@@ -798,115 +742,43 @@ function cropAndUpscale(srcCanvas, box, targetMinHeight) {
   const octx = out.getContext('2d');
   octx.imageSmoothingEnabled = true;
   octx.imageSmoothingQuality = 'high';
-  octx.drawImage(srcCanvas, box.x, box.y, box.w, box.h, 0, 0, outW, outH);
+  octx.drawImage(srcImg, box.x, box.y, box.w, box.h, 0, 0, outW, outH);
   return out;
 }
 
-function piSetStatus(pct, label) {
-  $('#pi_progress').style.display = 'block';
-  $('#pi_progress_fill').style.width = pct + '%';
-  $('#pi_progress_label').textContent = label;
-}
-
-function piLoadImageFile(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = reader.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 async function piRun() {
-  if (!pi.img) { toast('먼저 사진을 선택해주세요'); return; }
+  if (!pi.img || !pi.sel) { toast('먼저 인식할 부분을 드래그해서 선택해주세요'); return; }
   if (typeof Tesseract === 'undefined') { toast('문자 인식 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해주세요'); return; }
 
   $('#pi_runBtn').disabled = true;
   $('#pi_resultField').style.display = 'none';
   $('#pi_insertBtn').style.display = 'none';
-  piSetStatus(5, '이미지 준비 중…');
+  piSetStatus(10, '선택한 부분 준비 중…');
 
-  // 1) 원본을 작업용 캔버스에 넉넉한 해상도로 그리기 (너무 축소하면 인식률이 떨어짐)
-  const MAXW = 1800;
-  const scale0 = Math.min(1, MAXW / pi.img.width);
-  const w = Math.round(pi.img.width * scale0), h = Math.round(pi.img.height * scale0);
-  const work = document.createElement('canvas');
-  work.width = w; work.height = h;
-  const wctx = work.getContext('2d');
-  wctx.drawImage(pi.img, 0, 0, w, h);
-  const imgData = wctx.getImageData(0, 0, w, h);
+  const cropped = cropAndUpscale(pi.img, pi.sel, 160);
+  enhanceForOcr(cropped);
 
-  // 2) 형광펜 색 마스크 만들기
-  piSetStatus(15, '형광펜 영역 찾는 중…');
-  let hue = pi.chosenHue;
-  if (hue === 'auto') {
-    hue = detectAutoHue(imgData.data, w, h);
-    if (hue === null) toast('형광펜 색을 찾지 못해 전체 이미지를 인식합니다');
-  }
-  let mask = hue !== null ? buildHighlightMask(imgData.data, w, h, hue) : new Uint8Array(w * h).fill(1);
-  mask = dilateMask(mask, w, h, 6);
-
-  // 3) 형광펜이 칠해진 '줄 띠' 단위로 영역을 나눈다 (픽셀 단위로 지우지 않음 → 글자가 안 끊김)
-  const bands = findHighlightBands(mask, w, h, {
-    mergeGapPx: Math.max(10, Math.round(h * 0.015)),
-    minRowHits: Math.max(4, Math.round(w * 0.012)),
-    padY: Math.round(h * 0.012),
-    padX: Math.round(w * 0.01),
-  });
-
-  const regions = bands.length ? bands : [{ x: 0, y: 0, w, h }];
-
-  // 미리보기: band들을 위아래로 이어붙여서 보여주기
-  const previewCanvas = $('#pi_canvas');
-  const gap = 10;
-  const pw = Math.max(...regions.map(b => b.w));
-  const ph = regions.reduce((s, b) => s + b.h, 0) + gap * (regions.length - 1);
-  previewCanvas.width = pw; previewCanvas.height = ph;
-  const pctx = previewCanvas.getContext('2d');
-  pctx.fillStyle = '#fff'; pctx.fillRect(0, 0, pw, ph);
-  let py = 0;
-  for (const b of regions) {
-    pctx.drawImage(work, b.x, b.y, b.w, b.h, 0, py, b.w, b.h);
-    py += b.h + gap;
-  }
-  previewCanvas.style.display = 'block';
-
-  // 4) OCR 실행 — 영역별로 잘라서 하나씩 인식
   let worker = null;
   try {
-    piSetStatus(30, '인식 준비 중…');
+    piSetStatus(30, '글자 인식 중…');
     worker = await Tesseract.createWorker('kor+eng');
     await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
-
-    const texts = [];
-    for (let i = 0; i < regions.length; i++) {
-      const box = regions[i];
-      const cropped = cropAndUpscale(work, box, 130);
-      enhanceForOcr(cropped);
-      piSetStatus(30 + Math.round((i / regions.length) * 65), `글자 인식 중… (${i + 1}/${regions.length})`);
-      const { data } = await worker.recognize(cropped);
-      // 책은 페이지 폭 때문에 줄이 꺾여 있을 뿐 실제 문장은 이어지므로,
-      // 인식된 줄바꿈은 공백으로 이어붙여 하나의 문단으로 만든다.
-      const t = (data.text || '')
-        .split('\n')
-        .map(s => s.trim())
-        .filter(Boolean)
-        .join(' ')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-      if (t) texts.push(t);
-    }
+    const { data } = await worker.recognize(cropped);
     await worker.terminate();
     worker = null;
 
-    const text = texts.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+    // 책은 페이지 폭 때문에 줄이 꺾여 있을 뿐 실제 문장은 이어지므로,
+    // 인식된 줄바꿈은 공백으로 이어붙여 하나의 문단으로 만든다.
+    const text = (data.text || '')
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
     piSetStatus(100, '완료');
-    $('#pi_resultText').value = text || '(텍스트를 찾지 못했습니다. 형광펜 색을 바꾸거나 사진을 더 밝고 선명하게 찍어 다시 시도해보세요)';
+    $('#pi_resultText').value = text || '(텍스트를 찾지 못했습니다. 선택 영역을 조금 더 넉넉하게 잡거나 사진을 더 밝고 선명하게 찍어 다시 시도해보세요)';
     $('#pi_resultField').style.display = 'block';
     $('#pi_insertBtn').style.display = 'block';
   } catch (e) {
@@ -919,15 +791,18 @@ async function piRun() {
   }
 }
 
+let piSelectionWired = false;
 function openPhotoImport() {
-  pi.img = null; pi.chosenHue = 'auto';
+  pi.img = null; pi.sel = null; pi.dragging = false;
   $('#pi_file').value = '';
-  $('#pi_canvas').style.display = 'none';
+  $('#pi_imgwrap').style.display = 'none';
+  $('#pi_hint').style.display = 'none';
+  $('#pi_selbox').style.display = 'none';
   $('#pi_progress').style.display = 'none';
   $('#pi_resultField').style.display = 'none';
   $('#pi_insertBtn').style.display = 'none';
   $('#pi_runBtn').disabled = true;
-  $$('.pi-color').forEach(b => b.classList.toggle('active', b.dataset.hue === 'auto'));
+  if (!piSelectionWired) { piWireSelection(); piSelectionWired = true; }
   $('#photoImportOverlay').classList.add('show');
 }
 function closePhotoImport() { $('#photoImportOverlay').classList.remove('show'); }
@@ -1009,15 +884,12 @@ function wireEvents() {
     if (!file) return;
     try {
       pi.img = await piLoadImageFile(file);
-      $('#pi_runBtn').disabled = false;
-      toast('사진을 불러왔습니다. 형광펜 색을 고르고 인식을 눌러주세요');
+      pi.sel = null;
+      $('#pi_runBtn').disabled = true;
+      piDrawImage();
+      toast('인식하고 싶은 부분을 손가락으로 드래그해서 선택해주세요');
     } catch { toast('사진을 불러오지 못했습니다'); }
   });
-  $$('.pi-color').forEach(btn => btn.addEventListener('click', () => {
-    $$('.pi-color').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    pi.chosenHue = btn.dataset.hue === 'auto' ? 'auto' : Number(btn.dataset.hue);
-  }));
   $('#pi_runBtn').addEventListener('click', piRun);
   $('#pi_insertBtn').addEventListener('click', () => {
     const text = $('#pi_resultText').value.trim();
