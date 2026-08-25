@@ -612,7 +612,7 @@ function stopVoice() {
 /* =====================================================================
    PHOTO 문장 가져오기 (사용자가 직접 드래그로 선택한 영역만 OCR)
    ===================================================================== */
-const pi = { img: null, displayScale: 1, sel: null, dragging: false, startX: 0, startY: 0 };
+const pi = { img: null, displayScale: 1, sel: null, mode: 'none', rect: null, grabCorner: null, grabOffset: null };
 
 function piLoadImageFile(file) {
   return new Promise((resolve, reject) => {
@@ -652,18 +652,52 @@ function piWrapPoint(ev) {
   const rect = wrap.getBoundingClientRect();
   const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
   const y = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
-  return { x, y };
+  return { x, y, boundsW: rect.width, boundsH: rect.height };
 }
 
-function piUpdateSelBoxVisual(x0, y0, x1, y1) {
+// pi.rect: 화면 표시 좌표계의 현재 선택 사각형 {x0,y0,x1,y1} (x0<x1, y0<y1)
+function piRenderRect() {
+  const r = pi.rect;
   const box = $('#pi_selbox');
-  const left = Math.min(x0, x1), top = Math.min(y0, y1);
-  const w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
-  box.style.left = left + 'px';
-  box.style.top = top + 'px';
-  box.style.width = w + 'px';
-  box.style.height = h + 'px';
+  if (!r) { box.style.display = 'none'; return; }
+  box.style.left = r.x0 + 'px';
+  box.style.top = r.y0 + 'px';
+  box.style.width = (r.x1 - r.x0) + 'px';
+  box.style.height = (r.y1 - r.y0) + 'px';
   box.style.display = 'block';
+}
+
+function piCommitSelFromRect() {
+  const r = pi.rect;
+  if (!r) { pi.sel = null; $('#pi_runBtn').disabled = true; return; }
+  const w = r.x1 - r.x0, h = r.y1 - r.y0;
+  if (w < 14 || h < 10) return;
+  pi.sel = {
+    x: Math.round(r.x0 / pi.displayScale),
+    y: Math.round(r.y0 / pi.displayScale),
+    w: Math.round(w / pi.displayScale),
+    h: Math.round(h / pi.displayScale),
+  };
+  $('#pi_runBtn').disabled = false;
+}
+
+function piCornerAt(p) {
+  if (!pi.rect) return null;
+  const pts = {
+    nw: { x: pi.rect.x0, y: pi.rect.y0 },
+    ne: { x: pi.rect.x1, y: pi.rect.y0 },
+    sw: { x: pi.rect.x0, y: pi.rect.y1 },
+    se: { x: pi.rect.x1, y: pi.rect.y1 },
+  };
+  const R = 26; // 손가락으로 잡기 쉽게 넉넉한 반경
+  for (const [corner, pt] of Object.entries(pts)) {
+    if (Math.hypot(p.x - pt.x, p.y - pt.y) <= R) return corner;
+  }
+  return null;
+}
+
+function piInsideRect(p) {
+  return pi.rect && p.x >= pi.rect.x0 && p.x <= pi.rect.x1 && p.y >= pi.rect.y0 && p.y <= pi.rect.y1;
 }
 
 function piWireSelection() {
@@ -673,34 +707,49 @@ function piWireSelection() {
     if (!pi.img) return;
     wrap.setPointerCapture?.(ev.pointerId);
     const p = piWrapPoint(ev);
-    pi.dragging = true;
-    pi.startX = p.x; pi.startY = p.y;
-    piUpdateSelBoxVisual(p.x, p.y, p.x, p.y);
-  };
-  const onMove = (ev) => {
-    if (!pi.dragging) return;
-    const p = piWrapPoint(ev);
-    piUpdateSelBoxVisual(pi.startX, pi.startY, p.x, p.y);
-  };
-  const onUp = (ev) => {
-    if (!pi.dragging) return;
-    pi.dragging = false;
-    const p = piWrapPoint(ev);
-    const dispX0 = Math.min(pi.startX, p.x), dispY0 = Math.min(pi.startY, p.y);
-    const dispW = Math.abs(p.x - pi.startX), dispH = Math.abs(p.y - pi.startY);
-    if (dispW < 14 || dispH < 10) {
-      // 너무 작은 선택은 무시(실수로 살짝 터치한 경우)
-      $('#pi_selbox').style.display = pi.sel ? 'block' : 'none';
-      return;
+    const corner = piCornerAt(p);
+    if (corner) {
+      pi.mode = 'resize';
+      pi.grabCorner = corner;
+    } else if (piInsideRect(p)) {
+      pi.mode = 'move';
+      pi.grabOffset = { x: p.x - pi.rect.x0, y: p.y - pi.rect.y0, w: pi.rect.x1 - pi.rect.x0, h: pi.rect.y1 - pi.rect.y0 };
+    } else {
+      pi.mode = 'draw';
+      pi._drawStart = p;
+      pi.rect = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
     }
-    // 화면 표시 좌표 → 원본 이미지 좌표로 환산
-    pi.sel = {
-      x: Math.round(dispX0 / pi.displayScale),
-      y: Math.round(dispY0 / pi.displayScale),
-      w: Math.round(dispW / pi.displayScale),
-      h: Math.round(dispH / pi.displayScale),
-    };
-    $('#pi_runBtn').disabled = false;
+    piRenderRect();
+  };
+
+  const onMove = (ev) => {
+    if (pi.mode === 'none') return;
+    const p = piWrapPoint(ev);
+    if (pi.mode === 'draw') {
+      const sx = pi._drawStart.x, sy = pi._drawStart.y;
+      pi.rect = { x0: Math.min(sx, p.x), y0: Math.min(sy, p.y), x1: Math.max(sx, p.x), y1: Math.max(sy, p.y) };
+    } else if (pi.mode === 'resize') {
+      const r = pi.rect;
+      const fixed = {
+        nw: { x: r.x1, y: r.y1 }, ne: { x: r.x0, y: r.y1 },
+        sw: { x: r.x1, y: r.y0 }, se: { x: r.x0, y: r.y0 },
+      }[pi.grabCorner];
+      pi.rect = { x0: Math.min(fixed.x, p.x), y0: Math.min(fixed.y, p.y), x1: Math.max(fixed.x, p.x), y1: Math.max(fixed.y, p.y) };
+    } else if (pi.mode === 'move') {
+      const w = pi.grabOffset.w, h = pi.grabOffset.h;
+      let nx0 = p.x - pi.grabOffset.x, ny0 = p.y - pi.grabOffset.y;
+      nx0 = Math.max(0, Math.min(p.boundsW - w, nx0));
+      ny0 = Math.max(0, Math.min(p.boundsH - h, ny0));
+      pi.rect = { x0: nx0, y0: ny0, x1: nx0 + w, y1: ny0 + h };
+    }
+    piRenderRect();
+  };
+
+  const onUp = () => {
+    if (pi.mode === 'none') return;
+    pi.mode = 'none';
+    piCommitSelFromRect();
+    piRenderRect();
   };
 
   wrap.addEventListener('pointerdown', onDown);
@@ -793,7 +842,7 @@ async function piRun() {
 
 let piSelectionWired = false;
 function openPhotoImport() {
-  pi.img = null; pi.sel = null; pi.dragging = false;
+  pi.img = null; pi.sel = null; pi.rect = null; pi.mode = 'none';
   $('#pi_file').value = '';
   $('#pi_imgwrap').style.display = 'none';
   $('#pi_hint').style.display = 'none';
@@ -884,7 +933,8 @@ function wireEvents() {
     if (!file) return;
     try {
       pi.img = await piLoadImageFile(file);
-      pi.sel = null;
+      pi.sel = null; pi.rect = null; pi.mode = 'none';
+      $('#pi_selbox').style.display = 'none';
       $('#pi_runBtn').disabled = true;
       piDrawImage();
       toast('인식하고 싶은 부분을 손가락으로 드래그해서 선택해주세요');
