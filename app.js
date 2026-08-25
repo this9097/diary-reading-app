@@ -758,31 +758,9 @@ function piWireSelection() {
   wrap.addEventListener('pointercancel', onUp);
 }
 
-// 자르기만 하고 원본 색은 유지, 밝기 대비만 살짝 보정 — 인식률에 가장 중요한 건
-// 색을 억지로 흑/백으로 나누는 게 아니라 충분한 해상도와 자연스러운 대비.
-function enhanceForOcr(canvas) {
-  const ctx = canvas.getContext('2d');
-  const { width: w, height: h } = canvas;
-  const imgData = ctx.getImageData(0, 0, w, h);
-  const d = imgData.data;
-  let min = 255, max = 0;
-  const gray = new Float32Array(w * h);
-  for (let p = 0, i = 0; i < d.length; i += 4, p++) {
-    const g = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2];
-    gray[p] = g;
-    if (g < min) min = g;
-    if (g > max) max = g;
-  }
-  const range = Math.max(1, max - min);
-  for (let p = 0, i = 0; i < d.length; i += 4, p++) {
-    const v = Math.max(0, Math.min(255, ((gray[p] - min) / range) * 255));
-    d[i] = d[i + 1] = d[i + 2] = v;
-  }
-  ctx.putImageData(imgData, 0, 0);
-  return canvas;
-}
-
-// 잘라낸 조각이 너무 작으면 OCR 정확도가 크게 떨어지므로, 글자 높이가 넉넉해지도록 확대
+// 잘라낸 조각이 너무 작으면 OCR 정확도가 크게 떨어지므로, 글자 높이가 넉넉해지도록 확대.
+// 대비 보정은 일부러 하지 않는다 — 그림자나 굴곡이 있는 사진에서는 억지 보정이
+// 오히려 화질을 망가뜨려서, 자체적으로 대비를 처리하는 Tesseract에 맡기는 게 더 정확하다.
 function cropAndUpscale(srcImg, box, targetMinHeight) {
   const scale = box.h < targetMinHeight ? targetMinHeight / box.h : 1;
   const outW = Math.round(box.w * scale), outH = Math.round(box.h * scale);
@@ -804,8 +782,7 @@ async function piRun() {
   $('#pi_insertBtn').style.display = 'none';
   piSetStatus(10, '선택한 부분 준비 중…');
 
-  const cropped = cropAndUpscale(pi.img, pi.sel, 160);
-  enhanceForOcr(cropped);
+  const cropped = cropAndUpscale(pi.img, pi.sel, 200);
 
   let worker = null;
   try {
@@ -816,12 +793,22 @@ async function piRun() {
     await worker.terminate();
     worker = null;
 
+    // 한글이 거의 없고 알파벳/숫자/기호만 뒤섞인 줄은 인식 오류(노이즈)일 확률이
+    // 매우 높으므로 걸러낸다. 책 인용이 대부분 한글이라는 전제를 이용한 안전장치.
+    function looksLikeNoise(line) {
+      const stripped = line.replace(/[\s.,!?'"()\[\]·…\-]/g, '');
+      if (stripped.length < 4) return false;
+      const hangul = (stripped.match(/[가-힣]/g) || []).length;
+      return (hangul / stripped.length) < 0.3;
+    }
+
     // 책은 페이지 폭 때문에 줄이 꺾여 있을 뿐 실제 문장은 이어지므로,
     // 인식된 줄바꿈은 공백으로 이어붙여 하나의 문단으로 만든다.
     const text = (data.text || '')
       .split('\n')
       .map(s => s.trim())
       .filter(Boolean)
+      .filter(s => !looksLikeNoise(s))
       .join(' ')
       .replace(/\s{2,}/g, ' ')
       .trim();
