@@ -1190,7 +1190,10 @@ function detectAutoHue(data, w, h) {
   const bins = new Array(36).fill(0);
   for (let i = 0; i < data.length; i += 4 * 7) { // sample every ~7th pixel for speed
     const [hh, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
-    if (s > 0.28 && l > 0.32 && l < 0.94) bins[Math.floor(hh / 10) % 36]++;
+    // 살구색/피부색(대략 5~35도)은 채도가 낮아도 형광펜처럼 잡히기 쉬워
+    // 자동감지 후보에서 아예 제외한다. 정말 주황 형광펜이면 수동으로 '주황'을 고르면 됨.
+    const isSkinish = hh >= 5 && hh <= 35;
+    if (!isSkinish && s > 0.4 && l > 0.4 && l < 0.9) bins[Math.floor(hh / 10) % 36]++;
   }
   let best = 0, bestCount = -1;
   bins.forEach((c, i) => { if (c > bestCount) { bestCount = c; best = i; } });
@@ -1199,12 +1202,12 @@ function detectAutoHue(data, w, h) {
 
 function buildHighlightMask(data, w, h, targetHue) {
   const mask = new Uint8Array(w * h);
-  const tol = 30; // 색상 허용 오차(도) — 사진마다 색감이 달라 넉넉하게
+  const tol = 26; // 색상 허용 오차(도) — 사진마다 색감이 달라 넉넉하게
   for (let p = 0, i = 0; i < data.length; i += 4, p++) {
     const [hh, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
     let dh = Math.abs(hh - targetHue);
     if (dh > 180) dh = 360 - dh;
-    if (dh <= tol && s > 0.16 && l > 0.3 && l < 0.97) mask[p] = 1;
+    if (dh <= tol && s > 0.24 && l > 0.32 && l < 0.96) mask[p] = 1;
   }
   return mask;
 }
@@ -1275,6 +1278,9 @@ function findHighlightBands(mask, w, h, opts) {
     }
     if (maxX < 0) return null;
 
+    let strength = 0;
+    for (let y = y0; y <= y1; y++) strength += rowHits[y];
+
     const barRatio = (maxX - minX) / w;
     let x0, x1;
     if (barRatio < 0.15) {
@@ -1294,10 +1300,17 @@ function findHighlightBands(mask, w, h, opts) {
     }
 
     const yy0 = Math.max(0, y0 - padY), yy1 = Math.min(h, y1 + padY);
-    return { x: x0, y: yy0, w: x1 - x0, h: yy1 - yy0 };
+    return { x: x0, y: yy0, w: x1 - x0, h: yy1 - yy0, strength, rowSpan: y1 - y0 + 1 };
   }).filter(Boolean);
 
-  return bands;
+  if (!bands.length) return [];
+
+  // 아주 작은 잡티(피부색·조명 반사 등으로 잘못 걸린 점 몇 개)를 걸러낸다:
+  // 실제 형광펜 줄에 비해 색칠된 양이 너무 적거나, 세로 폭이 너무 좁으면 노이즈로 간주.
+  const maxStrength = Math.max(...bands.map(b => b.strength));
+  const filtered = bands.filter(b => b.rowSpan >= 6 && b.strength >= maxStrength * 0.12);
+
+  return (filtered.length ? filtered : bands).slice(0, 6);
 }
 
 // 자르기만 하고(색은 원본 그대로), 살짝 대비만 올려서 OCR 정확도를 높인다.
@@ -1421,11 +1434,19 @@ async function piRun() {
     const texts = [];
     for (let i = 0; i < regions.length; i++) {
       const box = regions[i];
-      const cropped = cropAndUpscale(work, box, 90);
+      const cropped = cropAndUpscale(work, box, 130);
       enhanceForOcr(cropped);
       piSetStatus(30 + Math.round((i / regions.length) * 65), `글자 인식 중… (${i + 1}/${regions.length})`);
       const { data } = await worker.recognize(cropped);
-      const t = (data.text || '').replace(/\s+\n/g, '\n').trim();
+      // 책은 페이지 폭 때문에 줄이 꺾여 있을 뿐 실제 문장은 이어지므로,
+      // 인식된 줄바꿈은 공백으로 이어붙여 하나의 문단으로 만든다.
+      const t = (data.text || '')
+        .split('\n')
+        .map(s => s.trim())
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
       if (t) texts.push(t);
     }
     await worker.terminate();
