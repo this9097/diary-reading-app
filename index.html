@@ -1199,13 +1199,18 @@ function piSetStatus(pct, label) {
 function piDrawImage() {
   const wrap = $('#pi_imgwrap');
   const canvas = $('#pi_dispCanvas');
-  const maxW = Math.min(wrap.parentElement.clientWidth || 600, 640);
+  // 실제 렌더링 너비를 재려면 먼저 보이는 상태여야 한다.
+  // (이전 버그: 부모 요소의 clientWidth를 썼는데, 부모의 padding이 빠지지
+  //  않은 값이라 화면에 그려지는 실제 폭보다 커서 좌표 변환에 오차가 생겼다)
+  wrap.style.display = 'block';
+  const maxW = Math.min(wrap.clientWidth || 600, 640);
   const scale = Math.min(1, maxW / pi.img.width);
   canvas.width = Math.round(pi.img.width * scale);
   canvas.height = Math.round(pi.img.height * scale);
-  pi.displayScale = scale;
+  // 캔버스는 CSS로 wrap 폭의 100%로 렌더링되므로, 실제 화면 표시 폭 기준으로
+  // 좌표 변환 비율을 다시 한번 정확히 맞춘다.
+  pi.displayScale = canvas.width / pi.img.width;
   canvas.getContext('2d').drawImage(pi.img, 0, 0, canvas.width, canvas.height);
-  wrap.style.display = 'block';
   $('#pi_hint').style.display = 'block';
 }
 
