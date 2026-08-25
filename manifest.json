@@ -1,0 +1,16 @@
+{
+  "name": "기록장 — 일기 · 독서노트",
+  "short_name": "기록장",
+  "description": "일기와 독서노트를 한 곳에 — 심상현",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EFE7D8",
+  "theme_color": "#EFE7D8",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" }
+  ]
+}
