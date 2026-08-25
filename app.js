@@ -784,8 +784,10 @@ async function piRun() {
 
   // 선택 상자 가장자리가 글자를 딱 걸치듯 자르면 그 글자를 엉뚱한 기호로
   // 잘못 읽는 경우가 많아, 사방으로 살짝 여백을 더 준 뒤 잘라낸다.
-  const padX = Math.round(pi.sel.w * 0.06) + 6;
-  const padY = Math.round(pi.sel.h * 0.10) + 6;
+  // 여백은 아주 작게만 준다 — 너무 크면 위/아래 다른 줄 글자까지 끌려와서
+  // 오히려 잡음이 생긴다. 글자 가장자리가 살짝 안 잘리는 정도면 충분하다.
+  const padX = 10;
+  const padY = 4;
   const paddedSel = {
     x: Math.max(0, pi.sel.x - padX),
     y: Math.max(0, pi.sel.y - padY),
