@@ -144,6 +144,19 @@ main{flex:1; padding:18px; max-width:720px; width:100%; margin:0 auto; padding-b
   background:var(--surface-2); color:var(--ink-soft); font-size:12px; display:flex; align-items:center; justify-content:center;
 }
 .search-info{font-size:12.5px; color:var(--ink-faint); margin:-2px 0 12px; padding-left:4px;}
+.book-chips{
+  display:flex; gap:8px; overflow-x:auto; padding:2px 2px 14px; margin-top:-4px;
+  -webkit-overflow-scrolling:touch; scrollbar-width:none;
+}
+.book-chips::-webkit-scrollbar{display:none;}
+.book-chip{
+  flex:none; display:flex; flex-direction:column; align-items:flex-start; gap:2px;
+  padding:9px 14px; border-radius:14px; border:1px solid var(--line);
+  background:var(--surface); max-width:180px;
+}
+.book-chip .bc-title{font-size:13px; font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px;}
+.book-chip .bc-author{font-size:11px; color:var(--ink-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px;}
+.book-chip .bc-plus{font-size:11px; color:var(--reading); margin-top:1px;}
 mark{background:var(--accent-soft); color:var(--ink); border-radius:3px; padding:0 2px;}
 .type-badge{
   font-size:10.5px; font-family:var(--font-mono); padding:3px 8px; border-radius:10px;
@@ -390,6 +403,7 @@ footer.credit{
       </div>
     </div>
     <div id="searchInfo" class="search-info" style="display:none;"></div>
+    <div id="bookChips" class="book-chips" style="display:none;"></div>
     <div id="entryList"></div>
   </main>
 
@@ -956,6 +970,8 @@ function renderAll() {
     info.style.display = 'none';
   }
 
+  renderBookChips(searching);
+
   if (!items.length) {
     list.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
@@ -1015,6 +1031,41 @@ function escapeHtml(s) {
 /* =====================================================================
    EDITOR
    ===================================================================== */
+// 독서노트 탭 위쪽에, 예전에 적었던 책들을 바로 누를 수 있는 칩 목록을 보여준다.
+// 같은 책에 기록을 여러 개 남길 때 제목을 매번 입력할 필요 없이 바로 시작할 수 있다.
+function renderBookChips(searching) {
+  const el = $('#bookChips');
+  if (state.activeTab !== 'reading' || searching) { el.style.display = 'none'; return; }
+  const books = [];
+  const seen = new Set();
+  state.entries
+    .filter(e => e.type === 'reading' && e.title)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .forEach(e => { if (!seen.has(e.title)) { seen.add(e.title); books.push(e); } });
+  if (!books.length) { el.style.display = 'none'; return; }
+  el.innerHTML = books.map(b => `
+    <button class="book-chip" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author || '')}">
+      <span class="bc-title">${escapeHtml(b.title)}</span>
+      ${b.author ? `<span class="bc-author">${escapeHtml(b.author)}</span>` : ''}
+      <span class="bc-plus">+ 이 책에 기록 추가</span>
+    </button>
+  `).join('');
+  el.style.display = 'flex';
+  el.querySelectorAll('.book-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      openEditorForBook(chip.dataset.title, chip.dataset.author);
+    });
+  });
+}
+
+// 기존 책 제목/저자를 미리 채운 채로 새 독서노트 작성창을 연다.
+function openEditorForBook(title, author) {
+  openEditor(null);
+  $('#f_title').value = title || '';
+  $('#f_author').value = author || '';
+  setTimeout(() => $('#f_body').focus(), 60);
+}
+
 function openEditor(entry) {
   const editType = entry ? entry.type : state.activeTab;
   const isReading = editType === 'reading';

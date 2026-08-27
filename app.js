@@ -383,6 +383,8 @@ function renderAll() {
     info.style.display = 'none';
   }
 
+  renderBookChips(searching);
+
   if (!items.length) {
     list.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
@@ -442,6 +444,41 @@ function escapeHtml(s) {
 /* =====================================================================
    EDITOR
    ===================================================================== */
+// 독서노트 탭 위쪽에, 예전에 적었던 책들을 바로 누를 수 있는 칩 목록을 보여준다.
+// 같은 책에 기록을 여러 개 남길 때 제목을 매번 입력할 필요 없이 바로 시작할 수 있다.
+function renderBookChips(searching) {
+  const el = $('#bookChips');
+  if (state.activeTab !== 'reading' || searching) { el.style.display = 'none'; return; }
+  const books = [];
+  const seen = new Set();
+  state.entries
+    .filter(e => e.type === 'reading' && e.title)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .forEach(e => { if (!seen.has(e.title)) { seen.add(e.title); books.push(e); } });
+  if (!books.length) { el.style.display = 'none'; return; }
+  el.innerHTML = books.map(b => `
+    <button class="book-chip" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author || '')}">
+      <span class="bc-title">${escapeHtml(b.title)}</span>
+      ${b.author ? `<span class="bc-author">${escapeHtml(b.author)}</span>` : ''}
+      <span class="bc-plus">+ 이 책에 기록 추가</span>
+    </button>
+  `).join('');
+  el.style.display = 'flex';
+  el.querySelectorAll('.book-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      openEditorForBook(chip.dataset.title, chip.dataset.author);
+    });
+  });
+}
+
+// 기존 책 제목/저자를 미리 채운 채로 새 독서노트 작성창을 연다.
+function openEditorForBook(title, author) {
+  openEditor(null);
+  $('#f_title').value = title || '';
+  $('#f_author').value = author || '';
+  setTimeout(() => $('#f_body').focus(), 60);
+}
+
 function openEditor(entry) {
   const editType = entry ? entry.type : state.activeTab;
   const isReading = editType === 'reading';
