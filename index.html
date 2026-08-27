@@ -222,6 +222,15 @@ mark{background:var(--accent-soft); color:var(--ink); border-radius:3px; padding
 .field input:focus, .field textarea:focus, .field select:focus{outline:2px solid var(--accent); outline-offset:0;}
 
 .input-with-mic{position:relative; display:flex;}
+.ac-list{
+  position:absolute; top:100%; left:0; right:0; margin-top:6px; z-index:30;
+  background:var(--surface); border:1px solid var(--line); border-radius:10px;
+  max-height:190px; overflow-y:auto; box-shadow:var(--shadow); display:none;
+}
+.ac-list.show{display:block;}
+.ac-item{padding:11px 14px; font-size:14px; color:var(--ink); border-bottom:1px solid var(--line-soft);}
+.ac-item:last-child{border-bottom:none;}
+.ac-item:active{background:var(--accent-soft);}
 .input-with-mic input{padding-right:44px;}
 .mic-btn{
   position:absolute; right:6px; top:50%; transform:translateY(-50%);
@@ -399,24 +408,24 @@ footer.credit{
     </div>
     <div class="field" id="titleField">
       <label id="titleLabel">제목</label>
-      <div class="input-with-mic">
-        <input type="text" id="f_title" placeholder="제목 (선택)" list="bookTitleList" autocomplete="off">
+      <div class="input-with-mic ac-wrap">
+        <input type="text" id="f_title" placeholder="제목 (선택)" autocomplete="off">
         <button type="button" class="mic-btn" id="mic_title" title="음성 입력">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z"/><path d="M19 11a7 7 0 01-14 0M12 18v3"/></svg>
         </button>
+        <div class="ac-list" id="titleAcList"></div>
       </div>
-      <datalist id="bookTitleList"></datalist>
     </div>
     <div class="row2" id="bookFields" style="display:none;">
       <div class="field">
         <label>저자</label>
-        <div class="input-with-mic">
-          <input type="text" id="f_author" placeholder="저자" list="bookAuthorList" autocomplete="off">
+        <div class="input-with-mic ac-wrap">
+          <input type="text" id="f_author" placeholder="저자" autocomplete="off">
           <button type="button" class="mic-btn" id="mic_author" title="음성 입력">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z"/><path d="M19 11a7 7 0 01-14 0M12 18v3"/></svg>
           </button>
+          <div class="ac-list" id="authorAcList"></div>
         </div>
-        <datalist id="bookAuthorList"></datalist>
       </div>
       <div class="field">
         <label>평점</label>
@@ -1024,19 +1033,41 @@ function openEditor(entry) {
   state.rating = entry ? (entry.rating || 0) : 0;
   renderStars();
   $('#bookFields').style.display = isReading ? 'grid' : 'none';
-  if (isReading) populateBookLists();
   $('#deleteEntryBtn').style.display = entry ? 'block' : 'none';
   $('#editorOverlay').classList.add('show');
   setTimeout(() => $('#f_title').focus(), 50);
 }
 function closeEditor() { stopVoice(); $('#editorOverlay').classList.remove('show'); state.editingId = null; }
 
-// 예전에 적었던 책 제목·저자를 자동완성 목록으로 띄워서, 같은 책을 또 적을 때 타이핑 없이 고를 수 있게 한다.
-function populateBookLists() {
-  const titles = [...new Set(state.entries.filter(e => e.type === 'reading' && e.title).map(e => e.title))].sort();
-  $('#bookTitleList').innerHTML = titles.map(t => `<option value="${escapeHtml(t)}"></option>`).join('');
-  const authors = [...new Set(state.entries.filter(e => e.type === 'reading' && e.author).map(e => e.author))].sort();
-  $('#bookAuthorList').innerHTML = authors.map(a => `<option value="${escapeHtml(a)}"></option>`).join('');
+// 예전에 적었던 책 제목/저자를 눌러서 고를 수 있는 자체 드롭다운 목록.
+// (Android 브라우저의 <datalist>는 키보드에 붙은 예측입력 칩으로 뜨는 경우가 있어
+//  스크롤 가능한 자체 목록으로 대신한다.)
+function uniqueSorted(getFn) {
+  return [...new Set(state.entries.filter(e => e.type === 'reading' && getFn(e)).map(getFn))].sort();
+}
+
+function setupAutocomplete(inputSel, listSel, getOptions, onPick, guard) {
+  const input = $(inputSel), list = $(listSel);
+
+  function render() {
+    if (guard && !guard()) { list.classList.remove('show'); return; }
+    const q = input.value.trim().toLowerCase();
+    const opts = getOptions().filter(o => !q || o.toLowerCase().includes(q));
+    if (!opts.length) { list.classList.remove('show'); return; }
+    list.innerHTML = opts.slice(0, 40).map(o => `<div class="ac-item">${escapeHtml(o)}</div>`).join('');
+    list.classList.add('show');
+  }
+
+  input.addEventListener('focus', render);
+  input.addEventListener('input', render);
+  input.addEventListener('blur', () => setTimeout(() => list.classList.remove('show'), 200));
+  list.addEventListener('click', (ev) => {
+    const item = ev.target.closest('.ac-item');
+    if (!item) return;
+    input.value = item.textContent;
+    list.classList.remove('show');
+    onPick?.(item.textContent);
+  });
 }
 
 function renderStars() {
@@ -1503,15 +1534,14 @@ function wireEvents() {
   setupVoiceButton('#mic_body', '#f_body');
   setupVoiceButton('#mic_author', '#f_author');
 
-  // 목록에서 이전에 적었던 책 제목을 그대로 고르면, 그 책의 저자를 자동으로 채워준다
-  // (저자 칸을 이미 직접 입력한 경우는 덮어쓰지 않음)
-  $('#f_title').addEventListener('change', () => {
-    if (state.editingType !== 'reading' && state.activeTab !== 'reading') return;
-    const title = $('#f_title').value.trim();
-    if (!title || $('#f_author').value.trim()) return;
+  // 예전에 적었던 책 제목/저자를 눌러서 고를 수 있는 목록. 제목을 목록에서 그대로
+  // 고르면 그 책의 저자도 자동으로 채워준다 (저자 칸에 이미 값이 있으면 덮어쓰지 않음).
+  setupAutocomplete('#f_title', '#titleAcList', () => uniqueSorted(e => e.title), (title) => {
+    if ($('#f_author').value.trim()) return;
     const match = state.entries.find(e => e.type === 'reading' && e.title === title && e.author);
     if (match) $('#f_author').value = match.author;
-  });
+  }, () => state.editingType === 'reading');
+  setupAutocomplete('#f_author', '#authorAcList', () => uniqueSorted(e => e.author));
 
   $('#openPhotoImportBtn').addEventListener('click', openPhotoImport);
   $('#pi_cancelBtn').addEventListener('click', closePhotoImport);
