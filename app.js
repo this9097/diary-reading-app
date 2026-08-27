@@ -476,18 +476,27 @@ function uniqueSorted(getFn) {
 function setupAutocomplete(inputSel, listSel, getOptions, onPick, guard) {
   const input = $(inputSel), list = $(listSel);
 
+  function positionList() {
+    const rect = input.getBoundingClientRect();
+    list.style.left = rect.left + 'px';
+    list.style.top = (rect.bottom + 4) + 'px';
+    list.style.width = rect.width + 'px';
+  }
+
   function render() {
     if (guard && !guard()) { list.classList.remove('show'); return; }
     const q = input.value.trim().toLowerCase();
     const opts = getOptions().filter(o => !q || o.toLowerCase().includes(q));
     if (!opts.length) { list.classList.remove('show'); return; }
     list.innerHTML = opts.slice(0, 40).map(o => `<div class="ac-item">${escapeHtml(o)}</div>`).join('');
+    positionList();
     list.classList.add('show');
   }
 
   input.addEventListener('focus', render);
   input.addEventListener('input', render);
   input.addEventListener('blur', () => setTimeout(() => list.classList.remove('show'), 200));
+  window.addEventListener('scroll', () => { if (list.classList.contains('show')) positionList(); }, true);
   list.addEventListener('click', (ev) => {
     const item = ev.target.closest('.ac-item');
     if (!item) return;
