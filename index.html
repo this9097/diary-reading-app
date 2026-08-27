@@ -144,19 +144,20 @@ main{flex:1; padding:18px; max-width:720px; width:100%; margin:0 auto; padding-b
   background:var(--surface-2); color:var(--ink-soft); font-size:12px; display:flex; align-items:center; justify-content:center;
 }
 .search-info{font-size:12.5px; color:var(--ink-faint); margin:-2px 0 12px; padding-left:4px;}
-.book-chips{
-  display:flex; gap:8px; overflow-x:auto; padding:2px 2px 14px; margin-top:-4px;
-  -webkit-overflow-scrolling:touch; scrollbar-width:none;
+.book-picker-btn{
+  display:flex; align-items:center; gap:9px; width:100%; text-align:left;
+  border:1px solid var(--line); background:var(--surface); color:var(--ink);
+  padding:12px 14px; border-radius:12px; font-size:14px; font-weight:600; margin:0 0 14px;
 }
-.book-chips::-webkit-scrollbar{display:none;}
-.book-chip{
-  flex:none; display:flex; flex-direction:column; align-items:flex-start; gap:2px;
-  padding:9px 14px; border-radius:14px; border:1px solid var(--line);
-  background:var(--surface); max-width:180px;
+.book-picker-btn svg:first-child{width:17px; height:17px; color:var(--reading); flex:none;}
+.book-picker-btn .bp-chev{width:16px; height:16px; color:var(--ink-faint); margin-left:auto; flex:none;}
+.bp-list{max-height:56vh; overflow-y:auto; margin-top:14px; border-top:1px solid var(--line-soft);}
+.bp-row{
+  display:flex; flex-direction:column; gap:2px; padding:13px 4px; border-bottom:1px solid var(--line-soft);
 }
-.book-chip .bc-title{font-size:13px; font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px;}
-.book-chip .bc-author{font-size:11px; color:var(--ink-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px;}
-.book-chip .bc-plus{font-size:11px; color:var(--reading); margin-top:1px;}
+.bp-row .bp-title{font-size:14.5px; font-weight:600; color:var(--ink);}
+.bp-row .bp-meta{font-size:12px; color:var(--ink-faint);}
+.bp-empty{padding:30px 4px; text-align:center; color:var(--ink-faint); font-size:13.5px;}
 mark{background:var(--accent-soft); color:var(--ink); border-radius:3px; padding:0 2px;}
 .type-badge{
   font-size:10.5px; font-family:var(--font-mono); padding:3px 8px; border-radius:10px;
@@ -403,7 +404,11 @@ footer.credit{
       </div>
     </div>
     <div id="searchInfo" class="search-info" style="display:none;"></div>
-    <div id="bookChips" class="book-chips" style="display:none;"></div>
+    <button id="bookPickerBtn" class="book-picker-btn" style="display:none;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+      <span id="bookPickerLabel">기존 책에 기록 추가</span>
+      <svg class="bp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+    </button>
     <div id="entryList"></div>
   </main>
 
@@ -512,6 +517,24 @@ footer.credit{
     <div class="sheet-actions">
       <button class="btn" id="pi_cancelBtn">취소</button>
       <button class="btn primary" id="pi_insertBtn" style="display:none;">내용에 추가</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ BOOK PICKER SHEET ============ -->
+<div class="sheet-overlay" id="bookPickerOverlay">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h2>어느 책에 기록할까요?</h2>
+    <div class="search-row" style="margin-top:0;">
+      <div class="search-box">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input type="text" id="bp_search" placeholder="책 제목·저자 검색">
+      </div>
+    </div>
+    <div id="bp_list" class="bp-list"></div>
+    <div class="sheet-actions">
+      <button class="btn" id="bp_cancelBtn" style="width:100%;">취소</button>
     </div>
   </div>
 </div>
@@ -970,7 +993,7 @@ function renderAll() {
     info.style.display = 'none';
   }
 
-  renderBookChips(searching);
+  updateBookPickerButton(searching);
 
   if (!items.length) {
     list.innerHTML = `<div class="empty">
@@ -1031,32 +1054,59 @@ function escapeHtml(s) {
 /* =====================================================================
    EDITOR
    ===================================================================== */
-// 독서노트 탭 위쪽에, 예전에 적었던 책들을 바로 누를 수 있는 칩 목록을 보여준다.
-// 같은 책에 기록을 여러 개 남길 때 제목을 매번 입력할 필요 없이 바로 시작할 수 있다.
-function renderBookChips(searching) {
-  const el = $('#bookChips');
-  if (state.activeTab !== 'reading' || searching) { el.style.display = 'none'; return; }
-  const books = [];
-  const seen = new Set();
-  state.entries
-    .filter(e => e.type === 'reading' && e.title)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .forEach(e => { if (!seen.has(e.title)) { seen.add(e.title); books.push(e); } });
-  if (!books.length) { el.style.display = 'none'; return; }
-  el.innerHTML = books.map(b => `
-    <button class="book-chip" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author || '')}">
-      <span class="bc-title">${escapeHtml(b.title)}</span>
-      ${b.author ? `<span class="bc-author">${escapeHtml(b.author)}</span>` : ''}
-      <span class="bc-plus">+ 이 책에 기록 추가</span>
+// 독서노트 탭 위쪽에 "기존 책에 기록 추가" 버튼을 보여줄지 결정한다.
+// 실제 목록은 버튼을 눌렀을 때 뜨는 검색 가능한 시트에서 고른다 (책이 수백 권이어도
+// 스크롤/검색으로 찾을 수 있어야 하므로 가로 칩 나열 방식은 쓰지 않는다).
+function updateBookPickerButton(searching) {
+  const btn = $('#bookPickerBtn');
+  const hasBooks = state.entries.some(e => e.type === 'reading' && e.title);
+  const show = state.activeTab === 'reading' && !searching && hasBooks;
+  btn.style.display = show ? 'flex' : 'none';
+}
+
+function getBookList() {
+  const map = new Map(); // title -> {title, author, count, latestUpdatedAt}
+  state.entries.filter(e => e.type === 'reading' && e.title).forEach(e => {
+    const cur = map.get(e.title);
+    if (!cur || e.updatedAt > cur.latestUpdatedAt) {
+      map.set(e.title, { title: e.title, author: e.author || '', count: (cur?.count || 0) + 1, latestUpdatedAt: e.updatedAt });
+    } else {
+      cur.count++;
+    }
+  });
+  return [...map.values()].sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt);
+}
+
+function renderBookPickerList() {
+  const q = $('#bp_search').value.trim().toLowerCase();
+  let books = getBookList();
+  if (q) books = books.filter(b => b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q));
+  const list = $('#bp_list');
+  if (!books.length) {
+    list.innerHTML = `<div class="bp-empty">${q ? '검색 결과가 없습니다' : '아직 기록한 책이 없습니다'}</div>`;
+    return;
+  }
+  list.innerHTML = books.map(b => `
+    <button class="bp-row" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}">
+      <span class="bp-title">${escapeHtml(b.title)}</span>
+      <span class="bp-meta">${b.author ? escapeHtml(b.author) + ' · ' : ''}기록 ${b.count}건</span>
     </button>
   `).join('');
-  el.style.display = 'flex';
-  el.querySelectorAll('.book-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      openEditorForBook(chip.dataset.title, chip.dataset.author);
+  list.querySelectorAll('.bp-row').forEach(row => {
+    row.addEventListener('click', () => {
+      closeBookPicker();
+      openEditorForBook(row.dataset.title, row.dataset.author);
     });
   });
 }
+
+function openBookPicker() {
+  $('#bp_search').value = '';
+  renderBookPickerList();
+  $('#bookPickerOverlay').classList.add('show');
+  setTimeout(() => $('#bp_search').focus(), 80);
+}
+function closeBookPicker() { $('#bookPickerOverlay').classList.remove('show'); }
 
 // 기존 책 제목/저자를 미리 채운 채로 새 독서노트 작성창을 연다.
 function openEditorForBook(title, author) {
@@ -1602,6 +1652,11 @@ function wireEvents() {
     if (match) $('#f_author').value = match.author;
   }, () => state.editingType === 'reading');
   setupAutocomplete('#f_author', '#authorAcList', () => uniqueSorted(e => e.author));
+
+  $('#bookPickerBtn').addEventListener('click', openBookPicker);
+  $('#bp_cancelBtn').addEventListener('click', closeBookPicker);
+  $('#bookPickerOverlay').addEventListener('click', (e) => { if (e.target.id === 'bookPickerOverlay') closeBookPicker(); });
+  $('#bp_search').addEventListener('input', renderBookPickerList);
 
   $('#openPhotoImportBtn').addEventListener('click', openPhotoImport);
   $('#pi_cancelBtn').addEventListener('click', closePhotoImport);

@@ -383,7 +383,7 @@ function renderAll() {
     info.style.display = 'none';
   }
 
-  renderBookChips(searching);
+  updateBookPickerButton(searching);
 
   if (!items.length) {
     list.innerHTML = `<div class="empty">
@@ -444,32 +444,59 @@ function escapeHtml(s) {
 /* =====================================================================
    EDITOR
    ===================================================================== */
-// 독서노트 탭 위쪽에, 예전에 적었던 책들을 바로 누를 수 있는 칩 목록을 보여준다.
-// 같은 책에 기록을 여러 개 남길 때 제목을 매번 입력할 필요 없이 바로 시작할 수 있다.
-function renderBookChips(searching) {
-  const el = $('#bookChips');
-  if (state.activeTab !== 'reading' || searching) { el.style.display = 'none'; return; }
-  const books = [];
-  const seen = new Set();
-  state.entries
-    .filter(e => e.type === 'reading' && e.title)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .forEach(e => { if (!seen.has(e.title)) { seen.add(e.title); books.push(e); } });
-  if (!books.length) { el.style.display = 'none'; return; }
-  el.innerHTML = books.map(b => `
-    <button class="book-chip" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author || '')}">
-      <span class="bc-title">${escapeHtml(b.title)}</span>
-      ${b.author ? `<span class="bc-author">${escapeHtml(b.author)}</span>` : ''}
-      <span class="bc-plus">+ 이 책에 기록 추가</span>
+// 독서노트 탭 위쪽에 "기존 책에 기록 추가" 버튼을 보여줄지 결정한다.
+// 실제 목록은 버튼을 눌렀을 때 뜨는 검색 가능한 시트에서 고른다 (책이 수백 권이어도
+// 스크롤/검색으로 찾을 수 있어야 하므로 가로 칩 나열 방식은 쓰지 않는다).
+function updateBookPickerButton(searching) {
+  const btn = $('#bookPickerBtn');
+  const hasBooks = state.entries.some(e => e.type === 'reading' && e.title);
+  const show = state.activeTab === 'reading' && !searching && hasBooks;
+  btn.style.display = show ? 'flex' : 'none';
+}
+
+function getBookList() {
+  const map = new Map(); // title -> {title, author, count, latestUpdatedAt}
+  state.entries.filter(e => e.type === 'reading' && e.title).forEach(e => {
+    const cur = map.get(e.title);
+    if (!cur || e.updatedAt > cur.latestUpdatedAt) {
+      map.set(e.title, { title: e.title, author: e.author || '', count: (cur?.count || 0) + 1, latestUpdatedAt: e.updatedAt });
+    } else {
+      cur.count++;
+    }
+  });
+  return [...map.values()].sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt);
+}
+
+function renderBookPickerList() {
+  const q = $('#bp_search').value.trim().toLowerCase();
+  let books = getBookList();
+  if (q) books = books.filter(b => b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q));
+  const list = $('#bp_list');
+  if (!books.length) {
+    list.innerHTML = `<div class="bp-empty">${q ? '검색 결과가 없습니다' : '아직 기록한 책이 없습니다'}</div>`;
+    return;
+  }
+  list.innerHTML = books.map(b => `
+    <button class="bp-row" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}">
+      <span class="bp-title">${escapeHtml(b.title)}</span>
+      <span class="bp-meta">${b.author ? escapeHtml(b.author) + ' · ' : ''}기록 ${b.count}건</span>
     </button>
   `).join('');
-  el.style.display = 'flex';
-  el.querySelectorAll('.book-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      openEditorForBook(chip.dataset.title, chip.dataset.author);
+  list.querySelectorAll('.bp-row').forEach(row => {
+    row.addEventListener('click', () => {
+      closeBookPicker();
+      openEditorForBook(row.dataset.title, row.dataset.author);
     });
   });
 }
+
+function openBookPicker() {
+  $('#bp_search').value = '';
+  renderBookPickerList();
+  $('#bookPickerOverlay').classList.add('show');
+  setTimeout(() => $('#bp_search').focus(), 80);
+}
+function closeBookPicker() { $('#bookPickerOverlay').classList.remove('show'); }
 
 // 기존 책 제목/저자를 미리 채운 채로 새 독서노트 작성창을 연다.
 function openEditorForBook(title, author) {
@@ -1015,6 +1042,11 @@ function wireEvents() {
     if (match) $('#f_author').value = match.author;
   }, () => state.editingType === 'reading');
   setupAutocomplete('#f_author', '#authorAcList', () => uniqueSorted(e => e.author));
+
+  $('#bookPickerBtn').addEventListener('click', openBookPicker);
+  $('#bp_cancelBtn').addEventListener('click', closeBookPicker);
+  $('#bookPickerOverlay').addEventListener('click', (e) => { if (e.target.id === 'bookPickerOverlay') closeBookPicker(); });
+  $('#bp_search').addEventListener('input', renderBookPickerList);
 
   $('#openPhotoImportBtn').addEventListener('click', openPhotoImport);
   $('#pi_cancelBtn').addEventListener('click', closePhotoImport);
