@@ -451,7 +451,7 @@ function openEditor(entry) {
   $('#f_date').value = entry ? entry.date : todayISO();
   $('#f_title').value = entry ? (entry.title || '') : '';
   $('#titleLabel').textContent = isReading ? '책 제목' : '제목';
-  $('#f_title').placeholder = isReading ? '책 제목' : '제목 (선택)';
+  $('#f_title').placeholder = isReading ? '책 제목 (예전에 적은 책은 목록에서 골라도 돼요)' : '제목 (선택)';
   $('#bodyLabel').textContent = isReading ? '느낀 점 / 메모' : '내용';
   $('#f_body').placeholder = isReading ? '읽으면서 느낀 점, 인상 깊은 구절 등을 적어보세요' : '오늘 있었던 일, 생각을 자유롭게 적어보세요';
   $('#f_body').value = entry ? (entry.body || '') : '';
@@ -460,11 +460,20 @@ function openEditor(entry) {
   state.rating = entry ? (entry.rating || 0) : 0;
   renderStars();
   $('#bookFields').style.display = isReading ? 'grid' : 'none';
+  if (isReading) populateBookLists();
   $('#deleteEntryBtn').style.display = entry ? 'block' : 'none';
   $('#editorOverlay').classList.add('show');
   setTimeout(() => $('#f_title').focus(), 50);
 }
 function closeEditor() { stopVoice(); $('#editorOverlay').classList.remove('show'); state.editingId = null; }
+
+// 예전에 적었던 책 제목·저자를 자동완성 목록으로 띄워서, 같은 책을 또 적을 때 타이핑 없이 고를 수 있게 한다.
+function populateBookLists() {
+  const titles = [...new Set(state.entries.filter(e => e.type === 'reading' && e.title).map(e => e.title))].sort();
+  $('#bookTitleList').innerHTML = titles.map(t => `<option value="${escapeHtml(t)}"></option>`).join('');
+  const authors = [...new Set(state.entries.filter(e => e.type === 'reading' && e.author).map(e => e.author))].sort();
+  $('#bookAuthorList').innerHTML = authors.map(a => `<option value="${escapeHtml(a)}"></option>`).join('');
+}
 
 function renderStars() {
   $$('#starPicker span').forEach(s => s.classList.toggle('on', +s.dataset.v <= state.rating));
@@ -929,6 +938,16 @@ function wireEvents() {
   setupVoiceButton('#mic_title', '#f_title');
   setupVoiceButton('#mic_body', '#f_body');
   setupVoiceButton('#mic_author', '#f_author');
+
+  // 목록에서 이전에 적었던 책 제목을 그대로 고르면, 그 책의 저자를 자동으로 채워준다
+  // (저자 칸을 이미 직접 입력한 경우는 덮어쓰지 않음)
+  $('#f_title').addEventListener('change', () => {
+    if (state.editingType !== 'reading' && state.activeTab !== 'reading') return;
+    const title = $('#f_title').value.trim();
+    if (!title || $('#f_author').value.trim()) return;
+    const match = state.entries.find(e => e.type === 'reading' && e.title === title && e.author);
+    if (match) $('#f_author').value = match.author;
+  });
 
   $('#openPhotoImportBtn').addEventListener('click', openPhotoImport);
   $('#pi_cancelBtn').addEventListener('click', closePhotoImport);
