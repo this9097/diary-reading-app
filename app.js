@@ -477,17 +477,55 @@ function renderBookPickerList() {
     return;
   }
   list.innerHTML = books.map(b => `
-    <button class="bp-row" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}">
-      <span class="bp-title">${escapeHtml(b.title)}</span>
-      <span class="bp-meta">${b.author ? escapeHtml(b.author) + ' · ' : ''}기록 ${b.count}건</span>
-    </button>
+    <div class="bp-row">
+      <button class="bp-row-main" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}">
+        <span class="bp-title">${escapeHtml(b.title)}</span>
+        <span class="bp-meta">${b.author ? escapeHtml(b.author) + ' · ' : ''}기록 ${b.count}건</span>
+      </button>
+      <button class="bp-edit-btn" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}" title="책 제목 수정">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>
+      </button>
+    </div>
   `).join('');
-  list.querySelectorAll('.bp-row').forEach(row => {
+  list.querySelectorAll('.bp-row-main').forEach(row => {
     row.addEventListener('click', () => {
       closeBookPicker();
       openEditorForBook(row.dataset.title, row.dataset.author);
     });
   });
+  list.querySelectorAll('.bp-edit-btn').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      renameBook(btn.dataset.title, btn.dataset.author);
+    });
+  });
+}
+
+// 책 제목(과 저자)을 한 번에 고쳐서, 그 책으로 묶인 기록 전체에 반영한다.
+function renameBook(oldTitle, oldAuthor) {
+  const newTitleRaw = prompt('책 제목 수정', oldTitle);
+  if (newTitleRaw === null) return; // 취소
+  const newTitle = newTitleRaw.trim();
+  if (!newTitle) { toast('제목을 입력해주세요'); return; }
+  const newAuthorRaw = prompt('저자 수정 (그대로 두려면 확인만 눌러주세요)', oldAuthor || '');
+  const newAuthor = newAuthorRaw === null ? oldAuthor : newAuthorRaw.trim();
+
+  if (newTitle === oldTitle && newAuthor === oldAuthor) return;
+
+  let changed = 0;
+  state.entries.forEach(e => {
+    if (e.type === 'reading' && e.title === oldTitle) {
+      e.title = newTitle;
+      e.author = newAuthor;
+      e.updatedAt = Date.now();
+      pushEntryToCloud(e);
+      changed++;
+    }
+  });
+  saveEntriesLocal();
+  renderAll();
+  renderBookPickerList();
+  toast(`기록 ${changed}건에 반영했습니다`);
 }
 
 function openBookPicker() {
