@@ -14,6 +14,7 @@ let state = {
   settings: { theme: 'paper', syncCode: '', firebaseConfig: null, fpEnabled: false },
   activeTab: 'diary',
   search: '',
+  bookFilter: null, // { title, author } — 독서노트에서 특정 책 기록만 볼 때
   editingId: null,
   editingType: null,
   rating: 0,
@@ -361,6 +362,7 @@ function renderAll() {
   const q = state.search.trim();
   const searching = q.length > 0;
   const ql = q.toLowerCase();
+  const filteringBook = !searching && state.activeTab === 'reading' && state.bookFilter;
 
   // While searching, look across BOTH 일기 and 독서노트; otherwise stick to the active tab.
   let items = searching ? state.entries.slice() : state.entries.filter(e => e.type === state.activeTab);
@@ -371,6 +373,8 @@ function renderAll() {
       (e.author || '').toLowerCase().includes(ql) ||
       (e.tags || []).some(t => t.toLowerCase().includes(ql))
     );
+  } else if (filteringBook) {
+    items = items.filter(e => e.title === state.bookFilter.title);
   }
   items.sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.createdAt - a.createdAt);
 
@@ -383,12 +387,21 @@ function renderAll() {
     info.style.display = 'none';
   }
 
-  updateBookPickerButton(searching);
+  const filterBar = $('#bookFilterBar');
+  if (filteringBook) {
+    $('#bfb_title').textContent = state.bookFilter.title;
+    $('#bfb_meta').textContent = `${state.bookFilter.author ? state.bookFilter.author + ' · ' : ''}기록 ${items.length}건`;
+    filterBar.style.display = 'flex';
+  } else {
+    filterBar.style.display = 'none';
+  }
+
+  updateBookPickerButton(searching || filteringBook);
 
   if (!items.length) {
     list.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
-      <p>${searching ? '검색 결과가 없습니다' : (state.activeTab === 'diary' ? '아직 쓴 일기가 없습니다.\n오늘 하루는 어떠셨나요?' : '아직 기록한 책이 없습니다.\n최근 읽은 책을 남겨보세요.')}</p>
+      <p>${searching ? '검색 결과가 없습니다' : (filteringBook ? '이 책에 남긴 기록이 없습니다' : (state.activeTab === 'diary' ? '아직 쓴 일기가 없습니다.\n오늘 하루는 어떠셨나요?' : '아직 기록한 책이 없습니다.\n최근 읽은 책을 남겨보세요.'))}</p>
     </div>`;
     return;
   }
@@ -490,7 +503,9 @@ function renderBookPickerList() {
   list.querySelectorAll('.bp-row-main').forEach(row => {
     row.addEventListener('click', () => {
       closeBookPicker();
-      openEditorForBook(row.dataset.title, row.dataset.author);
+      state.search = ''; $('#searchInput').value = '';
+      state.bookFilter = { title: row.dataset.title, author: row.dataset.author };
+      renderAll();
     });
   });
   list.querySelectorAll('.bp-edit-btn').forEach(btn => {
@@ -1106,11 +1121,18 @@ function closePhotoImport() { $('#photoImportOverlay').classList.remove('show');
    ===================================================================== */
 function wireEvents() {
   $$('.ribbon').forEach(r => r.addEventListener('click', () => {
-    state.activeTab = r.dataset.tab; state.search = ''; $('#searchInput').value = ''; renderAll();
+    state.activeTab = r.dataset.tab; state.search = ''; $('#searchInput').value = ''; state.bookFilter = null; renderAll();
   }));
-  $('#searchInput').addEventListener('input', (e) => { state.search = e.target.value; renderAll(); });
+  $('#searchInput').addEventListener('input', (e) => { state.search = e.target.value; state.bookFilter = null; renderAll(); });
   $('#searchClear').addEventListener('click', () => { state.search = ''; $('#searchInput').value = ''; $('#searchInput').focus(); renderAll(); });
-  $('#fabAdd').addEventListener('click', () => openEditor(null));
+  $('#bfb_clear').addEventListener('click', () => { state.bookFilter = null; renderAll(); });
+  $('#fabAdd').addEventListener('click', () => {
+    if (state.activeTab === 'reading' && state.bookFilter) {
+      openEditorForBook(state.bookFilter.title, state.bookFilter.author);
+    } else {
+      openEditor(null);
+    }
+  });
   $('#cancelEditorBtn').addEventListener('click', closeEditor);
   $('#saveEntryBtn').addEventListener('click', saveEditor);
   $('#deleteEntryBtn').addEventListener('click', () => {

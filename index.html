@@ -151,6 +151,16 @@ main{flex:1; padding:18px; max-width:720px; width:100%; margin:0 auto; padding-b
 }
 .book-picker-btn svg:first-child{width:17px; height:17px; color:var(--reading); flex:none;}
 .book-picker-btn .bp-chev{width:16px; height:16px; color:var(--ink-faint); margin-left:auto; flex:none;}
+.book-filter-bar{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:12px 14px; border-radius:12px; background:var(--accent-soft); margin:0 0 14px;
+}
+.bfb-title{font-size:14.5px; font-weight:700; color:var(--ink);}
+.bfb-meta{font-size:12px; color:var(--ink-soft); margin-top:2px;}
+.bfb-clear{
+  flex:none; font-size:12.5px; color:var(--accent); border:1px solid var(--accent);
+  background:transparent; padding:7px 13px; border-radius:16px; font-weight:600;
+}
 .bp-list{max-height:56vh; overflow-y:auto; margin-top:14px; border-top:1px solid var(--line-soft);}
 .bp-row{
   display:flex; align-items:center; gap:6px; border-bottom:1px solid var(--line-soft);
@@ -421,6 +431,13 @@ footer.credit{
       <span id="bookPickerLabel">기존 책에 기록 추가</span>
       <svg class="bp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
     </button>
+    <div id="bookFilterBar" class="book-filter-bar" style="display:none;">
+      <div class="bfb-info">
+        <div class="bfb-title" id="bfb_title"></div>
+        <div class="bfb-meta" id="bfb_meta"></div>
+      </div>
+      <button id="bfb_clear" class="bfb-clear">전체 보기</button>
+    </div>
     <div id="entryList"></div>
   </main>
 
@@ -636,6 +653,7 @@ let state = {
   settings: { theme: 'paper', syncCode: '', firebaseConfig: null, fpEnabled: false },
   activeTab: 'diary',
   search: '',
+  bookFilter: null, // { title, author } — 독서노트에서 특정 책 기록만 볼 때
   editingId: null,
   editingType: null,
   rating: 0,
@@ -983,6 +1001,7 @@ function renderAll() {
   const q = state.search.trim();
   const searching = q.length > 0;
   const ql = q.toLowerCase();
+  const filteringBook = !searching && state.activeTab === 'reading' && state.bookFilter;
 
   // While searching, look across BOTH 일기 and 독서노트; otherwise stick to the active tab.
   let items = searching ? state.entries.slice() : state.entries.filter(e => e.type === state.activeTab);
@@ -993,6 +1012,8 @@ function renderAll() {
       (e.author || '').toLowerCase().includes(ql) ||
       (e.tags || []).some(t => t.toLowerCase().includes(ql))
     );
+  } else if (filteringBook) {
+    items = items.filter(e => e.title === state.bookFilter.title);
   }
   items.sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.createdAt - a.createdAt);
 
@@ -1005,12 +1026,21 @@ function renderAll() {
     info.style.display = 'none';
   }
 
-  updateBookPickerButton(searching);
+  const filterBar = $('#bookFilterBar');
+  if (filteringBook) {
+    $('#bfb_title').textContent = state.bookFilter.title;
+    $('#bfb_meta').textContent = `${state.bookFilter.author ? state.bookFilter.author + ' · ' : ''}기록 ${items.length}건`;
+    filterBar.style.display = 'flex';
+  } else {
+    filterBar.style.display = 'none';
+  }
+
+  updateBookPickerButton(searching || filteringBook);
 
   if (!items.length) {
     list.innerHTML = `<div class="empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
-      <p>${searching ? '검색 결과가 없습니다' : (state.activeTab === 'diary' ? '아직 쓴 일기가 없습니다.\n오늘 하루는 어떠셨나요?' : '아직 기록한 책이 없습니다.\n최근 읽은 책을 남겨보세요.')}</p>
+      <p>${searching ? '검색 결과가 없습니다' : (filteringBook ? '이 책에 남긴 기록이 없습니다' : (state.activeTab === 'diary' ? '아직 쓴 일기가 없습니다.\n오늘 하루는 어떠셨나요?' : '아직 기록한 책이 없습니다.\n최근 읽은 책을 남겨보세요.'))}</p>
     </div>`;
     return;
   }
@@ -1112,7 +1142,9 @@ function renderBookPickerList() {
   list.querySelectorAll('.bp-row-main').forEach(row => {
     row.addEventListener('click', () => {
       closeBookPicker();
-      openEditorForBook(row.dataset.title, row.dataset.author);
+      state.search = ''; $('#searchInput').value = '';
+      state.bookFilter = { title: row.dataset.title, author: row.dataset.author };
+      renderAll();
     });
   });
   list.querySelectorAll('.bp-edit-btn').forEach(btn => {
@@ -1728,11 +1760,18 @@ function closePhotoImport() { $('#photoImportOverlay').classList.remove('show');
    ===================================================================== */
 function wireEvents() {
   $$('.ribbon').forEach(r => r.addEventListener('click', () => {
-    state.activeTab = r.dataset.tab; state.search = ''; $('#searchInput').value = ''; renderAll();
+    state.activeTab = r.dataset.tab; state.search = ''; $('#searchInput').value = ''; state.bookFilter = null; renderAll();
   }));
-  $('#searchInput').addEventListener('input', (e) => { state.search = e.target.value; renderAll(); });
+  $('#searchInput').addEventListener('input', (e) => { state.search = e.target.value; state.bookFilter = null; renderAll(); });
   $('#searchClear').addEventListener('click', () => { state.search = ''; $('#searchInput').value = ''; $('#searchInput').focus(); renderAll(); });
-  $('#fabAdd').addEventListener('click', () => openEditor(null));
+  $('#bfb_clear').addEventListener('click', () => { state.bookFilter = null; renderAll(); });
+  $('#fabAdd').addEventListener('click', () => {
+    if (state.activeTab === 'reading' && state.bookFilter) {
+      openEditorForBook(state.bookFilter.title, state.bookFilter.author);
+    } else {
+      openEditor(null);
+    }
+  });
   $('#cancelEditorBtn').addEventListener('click', closeEditor);
   $('#saveEntryBtn').addEventListener('click', saveEditor);
   $('#deleteEntryBtn').addEventListener('click', () => {
