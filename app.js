@@ -23,6 +23,23 @@ let state = {
 };
 
 let fbApp = null, fbDb = null, unsub = null;
+
+/* =====================================================================
+   뒤로가기(하드웨어/제스처) 버튼이 앱을 바로 종료시키지 않고, 열려있는
+   시트(입력창/설정/사진가져오기 등)부터 하나씩 닫도록 하는 히스토리 스택.
+   시트를 열 때 pushHistoryModal()을 호출하고, 팝업이 popstate로 닫힐 때는
+   해당 close 함수를 fromPop=true로 호출해 history.back()을 다시 부르지 않는다.
+   ===================================================================== */
+const overlayStack = [];
+function pushHistoryModal(closeFn) {
+  overlayStack.push(closeFn);
+  history.pushState({ appOverlay: true, depth: overlayStack.length }, '');
+}
+window.addEventListener('popstate', () => {
+  const closeFn = overlayStack.pop();
+  if (closeFn) closeFn(true);
+});
+
 const pendingLocalPush = new Map(); // id -> updatedAt, to ignore our own echo
 
 /* ---------------- utils ---------------- */
@@ -587,9 +604,14 @@ function openEditor(entry) {
   $('#bookFields').style.display = isReading ? 'grid' : 'none';
   $('#deleteEntryBtn').style.display = entry ? 'block' : 'none';
   $('#editorOverlay').classList.add('show');
+  pushHistoryModal((fromPop) => closeEditor(fromPop));
   setTimeout(() => $('#f_title').focus(), 50);
 }
-function closeEditor() { $('#editorOverlay').classList.remove('show'); state.editingId = null; }
+function closeEditor(fromPop) {
+  $('#editorOverlay').classList.remove('show');
+  state.editingId = null;
+  if (!fromPop) history.back();
+}
 
 // 예전에 적었던 책 제목/저자를 눌러서 고를 수 있는 자체 드롭다운 목록.
 // (Android 브라우저의 <datalist>는 키보드에 붙은 예측입력 칩으로 뜨는 경우가 있어
@@ -805,8 +827,12 @@ function openSettings() {
   $('#f_syncCode').value = state.settings.syncCode || '';
   $('#f_firebaseConfig').value = state.settings.firebaseConfig ? JSON.stringify(state.settings.firebaseConfig, null, 2) : '';
   $('#settingsOverlay').classList.add('show');
+  pushHistoryModal((fromPop) => closeSettings(fromPop));
 }
-function closeSettings() { $('#settingsOverlay').classList.remove('show'); }
+function closeSettings(fromPop) {
+  $('#settingsOverlay').classList.remove('show');
+  if (!fromPop) history.back();
+}
 
 /* =====================================================================
    PHOTO 문장 가져오기 (사용자가 직접 드래그로 선택한 영역만 OCR)
@@ -1057,8 +1083,12 @@ function openPhotoImport() {
   $('#pi_runBtn').disabled = true;
   if (!piSelectionWired) { piWireSelection(); piSelectionWired = true; }
   $('#photoImportOverlay').classList.add('show');
+  pushHistoryModal((fromPop) => closePhotoImport(fromPop));
 }
-function closePhotoImport() { $('#photoImportOverlay').classList.remove('show'); }
+function closePhotoImport(fromPop) {
+  $('#photoImportOverlay').classList.remove('show');
+  if (!fromPop) history.back();
+}
 
 /* =====================================================================
    EVENT WIRING
@@ -1078,7 +1108,7 @@ function wireEvents() {
       openEditor(null);
     }
   });
-  $('#cancelEditorBtn').addEventListener('click', closeEditor);
+  $('#cancelEditorBtn').addEventListener('click', () => closeEditor());
   $('#saveEntryBtn').addEventListener('click', saveEditor);
   $('#deleteEntryBtn').addEventListener('click', () => {
     if (state.editingId && confirm('이 기록을 삭제할까요?')) { deleteEntry(state.editingId); closeEditor(); toast('삭제되었습니다'); }
@@ -1089,7 +1119,7 @@ function wireEvents() {
   }));
 
   $('#settingsBtn').addEventListener('click', openSettings);
-  $('#closeSettingsBtn').addEventListener('click', closeSettings);
+  $('#closeSettingsBtn').addEventListener('click', () => closeSettings());
   $('#settingsOverlay').addEventListener('click', (e) => { if (e.target.id === 'settingsOverlay') closeSettings(); });
 
   $$('.swatch').forEach(s => s.addEventListener('click', () => {
@@ -1139,7 +1169,7 @@ function wireEvents() {
   setupAutocomplete('#f_author', '#authorAcList', () => uniqueSorted(e => e.author));
 
   $('#openPhotoImportBtn').addEventListener('click', openPhotoImport);
-  $('#pi_cancelBtn').addEventListener('click', closePhotoImport);
+  $('#pi_cancelBtn').addEventListener('click', () => closePhotoImport());
   $('#photoImportOverlay').addEventListener('click', (e) => { if (e.target.id === 'photoImportOverlay') closePhotoImport(); });
   $('#pi_file').addEventListener('change', async (e) => {
     const file = e.target.files[0];
