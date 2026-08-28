@@ -359,10 +359,12 @@ function renderAll() {
   document.documentElement.style.setProperty('--accent-soft', `var(--${state.activeTab === 'diary' ? 'diary' : 'reading'}-soft)`);
 
   const list = $('#entryList');
+  const grid = $('#bookGrid');
   const q = state.search.trim();
   const searching = q.length > 0;
   const ql = q.toLowerCase();
   const filteringBook = !searching && state.activeTab === 'reading' && state.bookFilter;
+  const showBookGrid = state.activeTab === 'reading' && !searching && !state.bookFilter;
 
   // While searching, look across BOTH 일기 and 독서노트; otherwise stick to the active tab.
   let items = searching ? state.entries.slice() : state.entries.filter(e => e.type === state.activeTab);
@@ -396,7 +398,13 @@ function renderAll() {
     filterBar.style.display = 'none';
   }
 
-  updateBookPickerButton(searching || filteringBook);
+  if (showBookGrid) {
+    list.style.display = 'none';
+    renderBookGrid();
+    return;
+  }
+  grid.style.display = 'none';
+  list.style.display = 'block';
 
   if (!items.length) {
     list.innerHTML = `<div class="empty">
@@ -460,60 +468,65 @@ function escapeHtml(s) {
 // 독서노트 탭 위쪽에 "기존 책에 기록 추가" 버튼을 보여줄지 결정한다.
 // 실제 목록은 버튼을 눌렀을 때 뜨는 검색 가능한 시트에서 고른다 (책이 수백 권이어도
 // 스크롤/검색으로 찾을 수 있어야 하므로 가로 칩 나열 방식은 쓰지 않는다).
-function updateBookPickerButton(searching) {
-  const btn = $('#bookPickerBtn');
-  const hasBooks = state.entries.some(e => e.type === 'reading' && e.title);
-  const show = state.activeTab === 'reading' && !searching && hasBooks;
-  btn.style.display = show ? 'flex' : 'none';
-}
-
 function getBookList() {
-  const map = new Map(); // title -> {title, author, count, latestUpdatedAt}
+  const map = new Map(); // title -> {title, author, count, latestUpdatedAt, coverUrl}
   state.entries.filter(e => e.type === 'reading' && e.title).forEach(e => {
     const cur = map.get(e.title);
-    if (!cur || e.updatedAt > cur.latestUpdatedAt) {
-      map.set(e.title, { title: e.title, author: e.author || '', count: (cur?.count || 0) + 1, latestUpdatedAt: e.updatedAt });
+    if (!cur) {
+      map.set(e.title, { title: e.title, author: e.author || '', count: 1, latestUpdatedAt: e.updatedAt, coverUrl: e.coverUrl || null });
     } else {
       cur.count++;
+      if (e.updatedAt > cur.latestUpdatedAt) cur.latestUpdatedAt = e.updatedAt;
+      if (!cur.coverUrl && e.coverUrl) cur.coverUrl = e.coverUrl;
     }
   });
   return [...map.values()].sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt);
 }
 
-function renderBookPickerList() {
-  const q = $('#bp_search').value.trim().toLowerCase();
-  let books = getBookList();
-  if (q) books = books.filter(b => b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q));
-  const list = $('#bp_list');
+const bookCoverIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>`;
+
+// 독서노트 탭의 기본 화면: 책 표지·제목·저자·기록 개수를 보여주는 책장.
+// 책을 누르면 그 책의 기록만 걸러서 보여주고(bookFilter), 연필로 제목을 고칠 수 있다.
+function renderBookGrid() {
+  const grid = $('#bookGrid');
+  const books = getBookList();
   if (!books.length) {
-    list.innerHTML = `<div class="bp-empty">${q ? '검색 결과가 없습니다' : '아직 기록한 책이 없습니다'}</div>`;
+    grid.innerHTML = `<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+      <p>아직 기록한 책이 없습니다.\n최근 읽은 책을 남겨보세요.</p>
+    </div>`;
+    grid.style.display = 'block';
     return;
   }
-  list.innerHTML = books.map(b => `
-    <div class="bp-row">
-      <button class="bp-row-main" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}">
-        <span class="bp-title">${escapeHtml(b.title)}</span>
-        <span class="bp-meta">${b.author ? escapeHtml(b.author) + ' · ' : ''}기록 ${b.count}건</span>
+  grid.innerHTML = books.map(b => `
+    <div class="book-row">
+      <button class="book-row-main" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}">
+        <div class="book-cover">${b.coverUrl ? `<img src="${escapeHtml(b.coverUrl)}" alt="">` : bookCoverIcon}</div>
       </button>
-      <button class="bp-edit-btn" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}" title="책 제목 수정">
+      <button class="book-row-main" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}" style="flex:1;">
+        <span class="br-title">${escapeHtml(b.title)}</span>
+        ${b.author ? `<span class="br-author">${escapeHtml(b.author)}</span>` : ''}
+        <span class="br-count">기록 ${b.count}건</span>
+      </button>
+      <button class="book-edit-btn" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}" title="책 제목 수정">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>
       </button>
     </div>
   `).join('');
-  list.querySelectorAll('.bp-row-main').forEach(row => {
+  grid.querySelectorAll('.book-row-main').forEach(row => {
     row.addEventListener('click', () => {
-      closeBookPicker();
       state.search = ''; $('#searchInput').value = '';
       state.bookFilter = { title: row.dataset.title, author: row.dataset.author };
       renderAll();
     });
   });
-  list.querySelectorAll('.bp-edit-btn').forEach(btn => {
+  grid.querySelectorAll('.book-edit-btn').forEach(btn => {
     btn.addEventListener('click', (ev) => {
       ev.stopPropagation();
       renameBook(btn.dataset.title, btn.dataset.author);
     });
   });
+  grid.style.display = 'flex';
 }
 
 // 책 제목(과 저자)을 한 번에 고쳐서, 그 책으로 묶인 기록 전체에 반영한다.
@@ -538,21 +551,15 @@ function renameBook(oldTitle, oldAuthor) {
     }
   });
   saveEntriesLocal();
+  if (state.bookFilter && state.bookFilter.title === oldTitle) state.bookFilter = { title: newTitle, author: newAuthor };
   renderAll();
-  renderBookPickerList();
   toast(`기록 ${changed}건에 반영했습니다`);
 }
 
-function openBookPicker() {
-  $('#bp_search').value = '';
-  renderBookPickerList();
-  $('#bookPickerOverlay').classList.add('show');
-  setTimeout(() => $('#bp_search').focus(), 80);
-}
-function closeBookPicker() { $('#bookPickerOverlay').classList.remove('show'); }
-
 // 기존 책 제목/저자를 미리 채운 채로 새 독서노트 작성창을 연다.
 function openEditorForBook(title, author) {
+  const book = getBookList().find(b => b.title === title);
+  selectedBookCover = book?.coverUrl || null;
   openEditor(null);
   $('#f_title').value = title || '';
   $('#f_author').value = author || '';
@@ -564,6 +571,7 @@ function openEditor(entry) {
   const isReading = editType === 'reading';
   state.editingId = entry ? entry.id : null;
   state.editingType = editType;
+  if (entry) selectedBookCover = entry.coverUrl || null;
   $('#editorTitle').textContent = entry ? '기록 수정' : (isReading ? '새 독서노트' : '오늘의 기록');
   $('#f_date').value = entry ? entry.date : todayISO();
   $('#f_title').value = entry ? (entry.title || '') : '';
@@ -633,6 +641,7 @@ function renderStars() {
    ===================================================================== */
 let bookSearchTimer = null;
 let bookSearchAbort = null;
+let selectedBookCover = null; // 검색 결과에서 고른 책의 표지 URL — 저장할 때 entry에 붙는다
 
 async function searchBooksOnline(query) {
   if (bookSearchAbort) bookSearchAbort.abort();
@@ -648,7 +657,8 @@ async function searchBooksOnline(query) {
       const vi = it.volumeInfo || {};
       if (!vi.title || seen.has(vi.title)) continue;
       seen.add(vi.title);
-      out.push({ title: vi.title, author: (vi.authors || []).join(', ') });
+      const cover = vi.imageLinks?.thumbnail?.replace(/^http:/, 'https:') || null;
+      out.push({ title: vi.title, author: (vi.authors || []).join(', '), cover });
     }
     return out;
   } catch (e) {
@@ -686,7 +696,7 @@ function setupTitleBookSearch() {
       .filter(t => !q || t.toLowerCase().includes(q.toLowerCase()))
       .map(t => {
         const m = state.entries.find(e => e.type === 'reading' && e.title === t);
-        return { title: t, author: m?.author || '', mine: true };
+        return { title: t, author: m?.author || '', cover: m?.coverUrl || null, mine: true };
       });
   }
 
@@ -721,6 +731,7 @@ function setupTitleBookSearch() {
     input.value = b.title;
     list.classList.remove('show');
     if (b.author && !$('#f_author').value.trim()) $('#f_author').value = b.author;
+    selectedBookCover = b.cover || null;
   });
 }
 
@@ -744,6 +755,7 @@ function saveEditor() {
   if (isReading) {
     entry.author = $('#f_author').value.trim();
     entry.rating = state.rating;
+    entry.coverUrl = selectedBookCover || null;
   }
   upsertEntry(entry);
   closeEditor();
@@ -1130,6 +1142,7 @@ function wireEvents() {
     if (state.activeTab === 'reading' && state.bookFilter) {
       openEditorForBook(state.bookFilter.title, state.bookFilter.author);
     } else {
+      selectedBookCover = null;
       openEditor(null);
     }
   });
@@ -1196,11 +1209,6 @@ function wireEvents() {
   // 고르면 저자도 자동으로 채워진다 (저자 칸에 이미 값이 있으면 덮어쓰지 않음).
   setupTitleBookSearch();
   setupAutocomplete('#f_author', '#authorAcList', () => uniqueSorted(e => e.author));
-
-  $('#bookPickerBtn').addEventListener('click', openBookPicker);
-  $('#bp_cancelBtn').addEventListener('click', closeBookPicker);
-  $('#bookPickerOverlay').addEventListener('click', (e) => { if (e.target.id === 'bookPickerOverlay') closeBookPicker(); });
-  $('#bp_search').addEventListener('input', renderBookPickerList);
 
   $('#openPhotoImportBtn').addEventListener('click', openPhotoImport);
   $('#pi_cancelBtn').addEventListener('click', closePhotoImport);
