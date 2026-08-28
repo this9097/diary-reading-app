@@ -646,6 +646,7 @@ window.addEventListener('popstate', () => {
   if (suppressNextPopstate > 0) { suppressNextPopstate--; return; } // 우리가 스스로 유발한 back → 이미 정리 끝, 무시
   const id = overlayOpenStack.pop(); // 가장 최근에 연 시트부터 닫는다
   if (!id) return; // 열린 시트가 없으면 진짜 뒤로가기(앱 종료 등)를 그대로 둔다
+  if (id === 'bookFilter') { state.bookFilter = null; renderAll(); return; }
   const el = document.getElementById(id);
   if (el) el.classList.remove('show');
   if (id === 'editorOverlay') state.editingId = null;
@@ -1147,6 +1148,7 @@ function renderBookGrid() {
     row.addEventListener('click', () => {
       state.search = ''; $('#searchInput').value = '';
       state.bookFilter = { title: row.dataset.title, author: row.dataset.author };
+      pushBackGuard('bookFilter');
       renderAll();
     });
   });
@@ -1749,13 +1751,16 @@ function closePhotoImport() {
 /* =====================================================================
    EVENT WIRING
    ===================================================================== */
+function clearBookFilter() {
+  if (state.bookFilter) { state.bookFilter = null; consumeBackGuard('bookFilter'); }
+}
 function wireEvents() {
   $$('.ribbon').forEach(r => r.addEventListener('click', () => {
-    state.activeTab = r.dataset.tab; state.search = ''; $('#searchInput').value = ''; state.bookFilter = null; renderAll();
+    state.activeTab = r.dataset.tab; state.search = ''; $('#searchInput').value = ''; clearBookFilter(); renderAll();
   }));
-  $('#searchInput').addEventListener('input', (e) => { state.search = e.target.value; state.bookFilter = null; renderAll(); });
+  $('#searchInput').addEventListener('input', (e) => { state.search = e.target.value; clearBookFilter(); renderAll(); });
   $('#searchClear').addEventListener('click', () => { state.search = ''; $('#searchInput').value = ''; $('#searchInput').focus(); renderAll(); });
-  $('#bfb_clear').addEventListener('click', () => { state.bookFilter = null; renderAll(); });
+  $('#bfb_clear').addEventListener('click', () => { clearBookFilter(); renderAll(); });
   $('#fabAdd').addEventListener('click', () => {
     if (state.activeTab === 'reading' && state.bookFilter) {
       openEditorForBook(state.bookFilter.title, state.bookFilter.author);
