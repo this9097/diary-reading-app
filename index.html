@@ -242,7 +242,10 @@ mark{background:var(--accent-soft); color:var(--ink); border-radius:3px; padding
   max-height:190px; overflow-y:auto; box-shadow:var(--shadow); display:none;
 }
 .ac-list.show{display:block;}
-.ac-item{padding:11px 14px; font-size:14px; color:var(--ink); border-bottom:1px solid var(--line-soft);}
+.ac-item{padding:10px 14px; border-bottom:1px solid var(--line-soft);}
+.ac-item .ac-item-title{font-size:14px; color:var(--ink); font-weight:500;}
+.ac-item .ac-item-sub{font-size:12px; color:var(--ink-faint); margin-top:2px;}
+.ac-item .ac-item-mine{font-size:10.5px; color:var(--accent); margin-top:2px;}
 .ac-item:last-child{border-bottom:none;}
 .ac-item:active{background:var(--accent-soft);}
 .input-with-mic input{padding-right:44px;}
@@ -1125,7 +1128,7 @@ function openEditor(entry) {
   $('#f_date').value = entry ? entry.date : todayISO();
   $('#f_title').value = entry ? (entry.title || '') : '';
   $('#titleLabel').textContent = isReading ? '책 제목' : '제목';
-  $('#f_title').placeholder = isReading ? '책 제목 (예전에 적은 책은 목록에서 골라도 돼요)' : '제목 (선택)';
+  $('#f_title').placeholder = isReading ? '책 제목 (검색하면 목록이 떠요)' : '제목 (선택)';
   $('#bodyLabel').textContent = isReading ? '느낀 점 / 메모' : '내용';
   $('#f_body').placeholder = isReading ? '읽으면서 느낀 점, 인상 깊은 구절 등을 적어보세요' : '오늘 있었던 일, 생각을 자유롭게 적어보세요';
   $('#f_body').value = entry ? (entry.body || '') : '';
@@ -1162,7 +1165,7 @@ function setupAutocomplete(inputSel, listSel, getOptions, onPick, guard) {
     const q = input.value.trim().toLowerCase();
     const opts = getOptions().filter(o => !q || o.toLowerCase().includes(q));
     if (!opts.length) { list.classList.remove('show'); return; }
-    list.innerHTML = opts.slice(0, 40).map(o => `<div class="ac-item">${escapeHtml(o)}</div>`).join('');
+    list.innerHTML = opts.slice(0, 40).map(o => `<div class="ac-item"><div class="ac-item-title">${escapeHtml(o)}</div></div>`).join('');
     positionList();
     list.classList.add('show');
   }
@@ -1183,6 +1186,104 @@ function setupAutocomplete(inputSel, listSel, getOptions, onPick, guard) {
 function renderStars() {
   $$('#starPicker span').forEach(s => s.classList.toggle('on', +s.dataset.v <= state.rating));
 }
+
+/* =====================================================================
+   책 제목 검색 — 네이버/구글처럼 몇 글자만 쳐도 실제 책 목록이 뜨고,
+   눌러서 계속 이어서 고를 수 있게 한다 (구글 도서 API 사용, 무료·키 불필요).
+   ===================================================================== */
+let bookSearchTimer = null;
+let bookSearchAbort = null;
+
+async function searchBooksOnline(query) {
+  if (bookSearchAbort) bookSearchAbort.abort();
+  bookSearchAbort = new AbortController();
+  try {
+    const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=10&langRestrict=ko`;
+    const res = await fetch(url, { signal: bookSearchAbort.signal });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const seen = new Set();
+    const out = [];
+    for (const it of (data.items || [])) {
+      const vi = it.volumeInfo || {};
+      if (!vi.title || seen.has(vi.title)) continue;
+      seen.add(vi.title);
+      out.push({ title: vi.title, author: (vi.authors || []).join(', ') });
+    }
+    return out;
+  } catch (e) {
+    if (e.name === 'AbortError') return null; // 더 최신 검색이 이미 시작됨 → 이 결과는 버림
+    return [];
+  }
+}
+
+function setupTitleBookSearch() {
+  const input = $('#f_title'), list = $('#titleAcList');
+
+  function positionList() {
+    const rect = input.getBoundingClientRect();
+    list.style.left = rect.left + 'px';
+    list.style.top = (rect.bottom + 4) + 'px';
+    list.style.width = rect.width + 'px';
+  }
+
+  function renderItems(items) {
+    list._items = items;
+    if (!items.length) { list.classList.remove('show'); return; }
+    list.innerHTML = items.map((b, i) => `
+      <div class="ac-item" data-i="${i}">
+        <div class="ac-item-title">${escapeHtml(b.title)}</div>
+        ${b.author ? `<div class="ac-item-sub">${escapeHtml(b.author)}</div>` : ''}
+        ${b.mine ? `<div class="ac-item-mine">내가 예전에 적은 책</div>` : ''}
+      </div>
+    `).join('');
+    positionList();
+    list.classList.add('show');
+  }
+
+  function ownBooksMatching(q) {
+    return uniqueSorted(e => e.title)
+      .filter(t => !q || t.toLowerCase().includes(q.toLowerCase()))
+      .map(t => {
+        const m = state.entries.find(e => e.type === 'reading' && e.title === t);
+        return { title: t, author: m?.author || '', mine: true };
+      });
+  }
+
+  input.addEventListener('focus', () => {
+    if (state.editingType !== 'reading') return;
+    if (!input.value.trim()) renderItems(ownBooksMatching(''));
+  });
+
+  input.addEventListener('input', () => {
+    if (state.editingType !== 'reading') return;
+    const q = input.value.trim();
+    clearTimeout(bookSearchTimer);
+    if (!q) { renderItems(ownBooksMatching('')); return; }
+    if (q.length < 2) { renderItems(ownBooksMatching(q)); return; }
+    bookSearchTimer = setTimeout(async () => {
+      const own = ownBooksMatching(q);
+      const ownTitles = new Set(own.map(o => o.title));
+      const online = await searchBooksOnline(q);
+      if (online === null) return; // 취소된 요청 (더 최근 검색이 진행 중)
+      renderItems([...own, ...online.filter(b => !ownTitles.has(b.title))]);
+    }, 350);
+  });
+
+  input.addEventListener('blur', () => setTimeout(() => list.classList.remove('show'), 200));
+  window.addEventListener('scroll', () => { if (list.classList.contains('show')) positionList(); }, true);
+
+  list.addEventListener('click', (ev) => {
+    const item = ev.target.closest('.ac-item');
+    if (!item) return;
+    const b = (list._items || [])[+item.dataset.i];
+    if (!b) return;
+    input.value = b.title;
+    list.classList.remove('show');
+    if (b.author && !$('#f_author').value.trim()) $('#f_author').value = b.author;
+  });
+}
+
 
 function saveEditor() {
   stopVoice();
@@ -1644,13 +1745,9 @@ function wireEvents() {
   setupVoiceButton('#mic_body', '#f_body');
   setupVoiceButton('#mic_author', '#f_author');
 
-  // 예전에 적었던 책 제목/저자를 눌러서 고를 수 있는 목록. 제목을 목록에서 그대로
-  // 고르면 그 책의 저자도 자동으로 채워준다 (저자 칸에 이미 값이 있으면 덮어쓰지 않음).
-  setupAutocomplete('#f_title', '#titleAcList', () => uniqueSorted(e => e.title), (title) => {
-    if ($('#f_author').value.trim()) return;
-    const match = state.entries.find(e => e.type === 'reading' && e.title === title && e.author);
-    if (match) $('#f_author').value = match.author;
-  }, () => state.editingType === 'reading');
+  // 제목 칸: 몇 글자만 쳐도 실제 책 검색 결과(+내가 예전에 적은 책)가 뜬다.
+  // 고르면 저자도 자동으로 채워진다 (저자 칸에 이미 값이 있으면 덮어쓰지 않음).
+  setupTitleBookSearch();
   setupAutocomplete('#f_author', '#authorAcList', () => uniqueSorted(e => e.author));
 
   $('#bookPickerBtn').addEventListener('click', openBookPicker);
