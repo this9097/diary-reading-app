@@ -619,22 +619,6 @@ let state = {
 
 let fbApp = null, fbDb = null, unsub = null;
 
-/* =====================================================================
-   뒤로가기(하드웨어/제스처) 버튼이 앱을 바로 종료시키지 않고, 열려있는
-   시트(입력창/설정/사진가져오기 등)부터 하나씩 닫도록 하는 히스토리 스택.
-   시트를 열 때 pushHistoryModal()을 호출하고, 팝업이 popstate로 닫힐 때는
-   해당 close 함수를 fromPop=true로 호출해 history.back()을 다시 부르지 않는다.
-   ===================================================================== */
-const overlayStack = [];
-function pushHistoryModal(closeFn) {
-  overlayStack.push(closeFn);
-  history.pushState({ appOverlay: true, depth: overlayStack.length }, '');
-}
-window.addEventListener('popstate', () => {
-  const closeFn = overlayStack.pop();
-  if (closeFn) closeFn(true);
-});
-
 const pendingLocalPush = new Map(); // id -> updatedAt, to ignore our own echo
 
 /* ---------------- utils ---------------- */
@@ -1201,13 +1185,11 @@ function openEditor(entry) {
   $('#bookFields').style.display = isReading ? 'grid' : 'none';
   $('#deleteEntryBtn').style.display = entry ? 'block' : 'none';
   $('#editorOverlay').classList.add('show');
-  pushHistoryModal((fromPop) => closeEditor(fromPop));
   setTimeout(() => $('#f_title').focus(), 50);
 }
-function closeEditor(fromPop) {
+function closeEditor() {
   $('#editorOverlay').classList.remove('show');
   state.editingId = null;
-  if (!fromPop) history.back();
 }
 
 // 예전에 적었던 책 제목/저자를 눌러서 고를 수 있는 자체 드롭다운 목록.
@@ -1467,11 +1449,9 @@ function openSettings() {
   $('#f_syncCode').value = state.settings.syncCode || '';
   $('#f_firebaseConfig').value = state.settings.firebaseConfig ? JSON.stringify(state.settings.firebaseConfig, null, 2) : '';
   $('#settingsOverlay').classList.add('show');
-  pushHistoryModal((fromPop) => closeSettings(fromPop));
 }
-function closeSettings(fromPop) {
+function closeSettings() {
   $('#settingsOverlay').classList.remove('show');
-  if (!fromPop) history.back();
 }
 
 /* =====================================================================
@@ -1723,11 +1703,9 @@ function openPhotoImport() {
   $('#pi_runBtn').disabled = true;
   if (!piSelectionWired) { piWireSelection(); piSelectionWired = true; }
   $('#photoImportOverlay').classList.add('show');
-  pushHistoryModal((fromPop) => closePhotoImport(fromPop));
 }
-function closePhotoImport(fromPop) {
+function closePhotoImport() {
   $('#photoImportOverlay').classList.remove('show');
-  if (!fromPop) history.back();
 }
 
 /* =====================================================================
