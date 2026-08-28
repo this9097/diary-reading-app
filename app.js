@@ -1180,6 +1180,7 @@ function wireEvents() {
   }));
 
   $('#settingsBtn').addEventListener('click', openSettings);
+  $('#syncIndicator').addEventListener('click', openSettings);
   $('#closeSettingsBtn').addEventListener('click', () => closeSettings());
   $('#settingsOverlay').addEventListener('click', (e) => { if (e.target.id === 'settingsOverlay') closeSettings(); });
 
