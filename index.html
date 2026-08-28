@@ -1113,7 +1113,7 @@ function renderBookGrid() {
   grid.innerHTML = books.map(b => `
     <div class="book-row">
       <button class="book-row-main" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}">
-        <div class="book-cover">${b.coverUrl ? `<img src="${escapeHtml(b.coverUrl)}" alt="">` : bookCoverIcon}</div>
+        <div class="book-cover" data-cover-for="${escapeHtml(b.title)}">${b.coverUrl ? `<img src="${escapeHtml(b.coverUrl)}" alt="">` : bookCoverIcon}</div>
       </button>
       <button class="book-row-main" data-title="${escapeHtml(b.title)}" data-author="${escapeHtml(b.author)}" style="flex:1;">
         <span class="br-title">${escapeHtml(b.title)}</span>
@@ -1125,6 +1125,8 @@ function renderBookGrid() {
       </button>
     </div>
   `).join('');
+  // 표지가 없는 책은 조용히 웹에서 찾아와서 채워넣는다 (실패해도 아이콘 그대로 유지)
+  books.filter(b => !b.coverUrl).forEach(b => ensureBookCover(b));
   grid.querySelectorAll('.book-row-main').forEach(row => {
     row.addEventListener('click', () => {
       state.search = ''; $('#searchInput').value = '';
@@ -1282,6 +1284,49 @@ async function searchBooksOnline(query) {
     if (e.name === 'AbortError') return null; // 더 최신 검색이 이미 시작됨 → 이 결과는 버림
     return [];
   }
+}
+
+// 책장에서 표지가 없는 책은 조용히 웹(구글 도서)에서 찾아 채워넣는다.
+// 같은 제목을 반복해서 검색하지 않도록 결과(성공/실패 모두)를 캐시해둔다.
+const coverLookupCache = new Map(); // title -> coverUrl(string) | null(못 찾음)
+const coverLookupInFlight = new Set();
+
+async function ensureBookCover(book) {
+  if (book.coverUrl || coverLookupInFlight.has(book.title)) return;
+  if (coverLookupCache.has(book.title)) {
+    const cached = coverLookupCache.get(book.title);
+    if (cached) applyBookCover(book.title, cached);
+    return;
+  }
+  coverLookupInFlight.add(book.title);
+  try {
+    const query = book.author ? `${book.title} ${book.author}` : book.title;
+    const results = await searchBooksOnline(query);
+    const found = (results || []).find(r => r.cover)?.cover || null;
+    coverLookupCache.set(book.title, found);
+    if (found) applyBookCover(book.title, found);
+  } finally {
+    coverLookupInFlight.delete(book.title);
+  }
+}
+
+function applyBookCover(title, coverUrl) {
+  let changed = false;
+  state.entries.forEach(e => {
+    if (e.type === 'reading' && e.title === title && !e.coverUrl) {
+      e.coverUrl = coverUrl;
+      pushEntryToCloud(e);
+      changed = true;
+    }
+  });
+  if (!changed) return;
+  saveEntriesLocal();
+  // 화면 전체를 다시 그리지 않고, 해당 책 표지 자리만 조용히 채워넣는다
+  $$('.book-cover[data-cover-for]').forEach(el => {
+    if (el.dataset.coverFor === title && !el.querySelector('img')) {
+      el.innerHTML = `<img src="${escapeHtml(coverUrl)}" alt="">`;
+    }
+  });
 }
 
 function setupTitleBookSearch() {
