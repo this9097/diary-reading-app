@@ -589,7 +589,7 @@ function openEditor(entry) {
   $('#editorOverlay').classList.add('show');
   setTimeout(() => $('#f_title').focus(), 50);
 }
-function closeEditor() { stopVoice(); $('#editorOverlay').classList.remove('show'); state.editingId = null; }
+function closeEditor() { $('#editorOverlay').classList.remove('show'); state.editingId = null; }
 
 // 예전에 적었던 책 제목/저자를 눌러서 고를 수 있는 자체 드롭다운 목록.
 // (Android 브라우저의 <datalist>는 키보드에 붙은 예측입력 칩으로 뜨는 경우가 있어
@@ -737,7 +737,6 @@ function setupTitleBookSearch() {
 
 
 function saveEditor() {
-  stopVoice();
   const editType = state.editingType || state.activeTab;
   const isReading = editType === 'reading';
   const body = $('#f_body').value.trim();
@@ -808,73 +807,6 @@ function openSettings() {
   $('#settingsOverlay').classList.add('show');
 }
 function closeSettings() { $('#settingsOverlay').classList.remove('show'); }
-
-/* =====================================================================
-   VOICE INPUT (Web Speech API — 한국어 음성 인식)
-   ===================================================================== */
-const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
-let activeRecognition = null;
-let activeMicBtn = null;
-
-function setupVoiceButton(btnId, fieldId) {
-  const btn = $(btnId), field = $(fieldId);
-  if (!btn || !field) return;
-  if (!SpeechRecognitionCtor) { btn.classList.add('unsupported'); return; }
-
-  btn.addEventListener('click', () => {
-    if (activeMicBtn === btn) { stopVoice(); return; }
-    if (activeRecognition) stopVoice();
-    startVoice(btn, field);
-  });
-}
-
-function startVoice(btn, field) {
-  const rec = new SpeechRecognitionCtor();
-  rec.lang = 'ko-KR';
-  rec.continuous = true;
-  rec.interimResults = true;
-
-  const baseValue = field.value ? field.value.replace(/\s+$/, '') + (field.value ? ' ' : '') : '';
-  let finalText = '';
-
-  rec.onresult = (ev) => {
-    let interim = '';
-    for (let i = ev.resultIndex; i < ev.results.length; i++) {
-      const chunk = ev.results[i][0].transcript;
-      if (ev.results[i].isFinal) finalText += chunk + ' ';
-      else interim += chunk;
-    }
-    field.value = baseValue + finalText + interim;
-  };
-  rec.onerror = (ev) => {
-    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
-      toast('마이크 권한을 허용해주세요');
-    }
-    stopVoice();
-  };
-  rec.onend = () => {
-    if (activeRecognition === rec) stopVoice();
-  };
-
-  try {
-    rec.start();
-    activeRecognition = rec;
-    activeMicBtn = btn;
-    btn.classList.add('listening');
-    toast('듣고 있습니다… 다시 누르면 멈춥니다');
-  } catch (e) {
-    console.error('voice start failed', e);
-  }
-}
-
-function stopVoice() {
-  if (activeRecognition) {
-    try { activeRecognition.stop(); } catch {}
-  }
-  if (activeMicBtn) activeMicBtn.classList.remove('listening');
-  activeRecognition = null;
-  activeMicBtn = null;
-}
 
 /* =====================================================================
    PHOTO 문장 가져오기 (사용자가 직접 드래그로 선택한 영역만 OCR)
@@ -1200,10 +1132,6 @@ function wireEvents() {
     if (cfg) { initFirebaseSync(); toast(`동기화 코드: ${code} (다른 기기에도 같은 코드를 입력하세요)`); }
     else toast('설정이 저장되었습니다');
   });
-
-  setupVoiceButton('#mic_title', '#f_title');
-  setupVoiceButton('#mic_body', '#f_body');
-  setupVoiceButton('#mic_author', '#f_author');
 
   // 제목 칸: 몇 글자만 쳐도 실제 책 검색 결과(+내가 예전에 적은 책)가 뜬다.
   // 고르면 저자도 자동으로 채워진다 (저자 칸에 이미 값이 있으면 덮어쓰지 않음).
