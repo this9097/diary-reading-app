@@ -619,6 +619,38 @@ let state = {
 
 let fbApp = null, fbDb = null, unsub = null;
 
+/* =====================================================================
+   뒤로가기(하드웨어/제스처) 버튼이 앱을 바로 종료시키지 않고, 열려있는
+   시트부터 하나씩 닫도록 하는 안전한 히스토리 스택.
+
+   핵심 원칙: history.back()을 부르는 곳은 딱 한 곳(consumeBackGuard)뿐이고,
+   그 호출로 생기는 popstate는 suppressNextPopstate로 스스로 무시한다.
+   그래서 "우리가 스스로 부른 back"과 "사용자가 진짜로 누른 뒤로가기"가
+   절대 헷갈리지 않고, pushState/back 횟수가 항상 정확히 맞는다.
+   ===================================================================== */
+const overlayOpenStack = []; // 열린 순서대로 오버레이 id를 쌓아둠 (예: 'editorOverlay')
+let suppressNextPopstate = 0;
+
+function pushBackGuard(overlayId) {
+  overlayOpenStack.push(overlayId);
+  history.pushState({ appOverlay: overlayId, depth: overlayOpenStack.length }, '');
+}
+function consumeBackGuard(overlayId) {
+  const idx = overlayOpenStack.lastIndexOf(overlayId);
+  if (idx === -1) return; // 짝이 안 맞으면(이미 닫혔거나 애초에 push 안 됐으면) 아무 것도 안 함 — 안전
+  overlayOpenStack.splice(idx, 1);
+  suppressNextPopstate++;
+  history.back();
+}
+window.addEventListener('popstate', () => {
+  if (suppressNextPopstate > 0) { suppressNextPopstate--; return; } // 우리가 스스로 유발한 back → 이미 정리 끝, 무시
+  const id = overlayOpenStack.pop(); // 가장 최근에 연 시트부터 닫는다
+  if (!id) return; // 열린 시트가 없으면 진짜 뒤로가기(앱 종료 등)를 그대로 둔다
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('show');
+  if (id === 'editorOverlay') state.editingId = null;
+});
+
 const pendingLocalPush = new Map(); // id -> updatedAt, to ignore our own echo
 
 /* ---------------- utils ---------------- */
@@ -1185,11 +1217,13 @@ function openEditor(entry) {
   $('#bookFields').style.display = isReading ? 'grid' : 'none';
   $('#deleteEntryBtn').style.display = entry ? 'block' : 'none';
   $('#editorOverlay').classList.add('show');
+  pushBackGuard('editorOverlay');
   setTimeout(() => $('#f_title').focus(), 50);
 }
 function closeEditor() {
   $('#editorOverlay').classList.remove('show');
   state.editingId = null;
+  consumeBackGuard('editorOverlay');
 }
 
 // 예전에 적었던 책 제목/저자를 눌러서 고를 수 있는 자체 드롭다운 목록.
@@ -1449,9 +1483,11 @@ function openSettings() {
   $('#f_syncCode').value = state.settings.syncCode || '';
   $('#f_firebaseConfig').value = state.settings.firebaseConfig ? JSON.stringify(state.settings.firebaseConfig, null, 2) : '';
   $('#settingsOverlay').classList.add('show');
+  pushBackGuard('settingsOverlay');
 }
 function closeSettings() {
   $('#settingsOverlay').classList.remove('show');
+  consumeBackGuard('settingsOverlay');
 }
 
 /* =====================================================================
@@ -1703,9 +1739,11 @@ function openPhotoImport() {
   $('#pi_runBtn').disabled = true;
   if (!piSelectionWired) { piWireSelection(); piSelectionWired = true; }
   $('#photoImportOverlay').classList.add('show');
+  pushBackGuard('photoImportOverlay');
 }
 function closePhotoImport() {
   $('#photoImportOverlay').classList.remove('show');
+  consumeBackGuard('photoImportOverlay');
 }
 
 /* =====================================================================
