@@ -673,6 +673,74 @@ function setupAutocomplete(inputSel, listSel, getOptions, onPick, guard) {
   });
 }
 
+/* =====================================================================
+   맞춤법 검사 (오프라인, 자주 틀리는 표현 사전 기반)
+   외부 맞춤법 API(네이버/다음 등)는 브라우저에서 직접 부르면 CORS로 막히는
+   경우가 대부분이라, 항상 확실하게 동작하는 방식을 택했다: 문맥과 상관없이
+   거의 항상 틀린 표현들만 골라 안전하게 바꿔주고, 띄어쓰기·공백도 정리한다.
+   ===================================================================== */
+const KOREAN_TYPO_FIXES = [
+  ['됬', '됐'],
+  ['몇일', '며칠'],
+  ['웬지', '왠지'],
+  ['왠만하면', '웬만하면'], ['왠만한', '웬만한'], ['왠만해서', '웬만해서'], ['왠만큼', '웬만큼'],
+  ['어의없', '어이없'],
+  ['금새', '금세'],
+  ['희안하', '희한하'],
+  ['오랫만', '오랜만'],
+  ['오랜동안', '오랫동안'],
+  ['촛점', '초점'],
+  ['구지', '굳이'],
+  ['서슴치', '서슴지'],
+  ['낭떨어지', '낭떠러지'],
+  ['통털어', '통틀어'],
+  ['설레임', '설렘'], ['설레이는', '설레는'], ['설레였', '설렜'],
+  ['예기하', '얘기하'],
+  ['어떻해', '어떡해'],
+  ['어짜피', '어차피'],
+  ['곰곰히', '곰곰이'],
+  ['일일히', '일일이'],
+  ['육계장', '육개장'],
+  ['부페', '뷔페'],
+  ['인권비', '인건비'],
+  ['되물림', '대물림'],
+  ['들어나', '드러나'],
+  ['깨끗히', '깨끗이'],
+  ['넉넉치', '넉넉지'],
+  ['않됨', '안 됨'], ['않되나요', '안 되나요'], ['않됩니다', '안 됩니다'],
+  ['임마', '인마'],
+  ['눈쌀', '눈살'],
+  ['핼쓱', '핼쑥'],
+  ['치루', '치르'], // 치루다(X) -> 치르다 계열: 치루고→치르고 등은 아래 활용형에서 별도 처리
+  ['치루고', '치르고'], ['치뤘', '치렀'], ['치룬', '치른'],
+  ['담궈', '담가'], ['담궜', '담갔'],
+  ['잠궈', '잠가'], ['잠궜', '잠갔'],
+];
+// 위 배열에 실수로 들어간 역방향 항목 제거하고 최종 목록 확정
+const _fixMap = new Map();
+KOREAN_TYPO_FIXES.forEach(([a, b]) => { if (a && b && a !== b) _fixMap.set(a, b); });
+
+function runSpellCheck(text) {
+  let result = text;
+  let count = 0;
+  for (const [wrong, right] of _fixMap.entries()) {
+    if (result.includes(wrong)) {
+      const n = result.split(wrong).length - 1;
+      result = result.split(wrong).join(right);
+      count += n;
+    }
+  }
+  // 공백 정리: 줄 끝 공백 제거, 문장 내 3칸 이상 공백은 1칸으로, 탭은 공백으로
+  const beforeSpacing = result;
+  result = result
+    .split('\n')
+    .map(line => line.replace(/[ \t]+$/g, '').replace(/ {2,}/g, ' '))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n');
+  if (result !== beforeSpacing) count++;
+  return { text: result, count };
+}
+
 function renderStars() {
   $$('#starPicker span').forEach(s => s.classList.toggle('on', +s.dataset.v <= state.rating));
 }
@@ -1236,6 +1304,13 @@ function wireEvents() {
   setupAutocomplete('#f_author', '#authorAcList', () => uniqueSorted(e => e.author));
 
   $('#openPhotoImportBtn').addEventListener('click', openPhotoImport);
+  $('#spellcheckBtn').addEventListener('click', () => {
+    const before = $('#f_body').value;
+    const { text, count } = runSpellCheck(before);
+    if (count === 0) { toast('고칠 부분을 찾지 못했습니다'); return; }
+    $('#f_body').value = text;
+    toast(`${count}곳을 고쳤습니다`);
+  });
   $('#pi_cancelBtn').addEventListener('click', () => closePhotoImport());
   $('#photoImportOverlay').addEventListener('click', (e) => { if (e.target.id === 'photoImportOverlay') closePhotoImport(); });
   $('#pi_file').addEventListener('change', async (e) => {
