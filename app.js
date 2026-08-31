@@ -1433,25 +1433,23 @@ function wireEvents() {
   setupAutocomplete('#f_author', '#authorAcList', () => uniqueSorted(e => e.author));
 
   $('#openPhotoImportBtn').addEventListener('click', openPhotoImport);
-  let pendingSpellcheckText = null;
+  let spellcheckOriginalText = null;
   $('#spellcheckBtn').addEventListener('click', () => {
     const before = $('#f_body').value;
     const { text, count } = runSpellCheck(before);
     if (count === 0) { toast('고칠 부분을 찾지 못했습니다'); return; }
-    pendingSpellcheckText = text;
+    spellcheckOriginalText = before;
+    $('#f_body').value = text; // 바로 적용
     $('#spellcheckPreview').innerHTML = buildSpellcheckPreviewHtml(before, text);
     $('#spellcheckPreviewField').style.display = 'block';
+    toast(`${count}곳 고쳤습니다`);
   });
-  $('#spellcheckApplyBtn').addEventListener('click', () => {
-    if (pendingSpellcheckText !== null) {
-      $('#f_body').value = pendingSpellcheckText;
-      toast('적용했습니다');
+  $('#spellcheckUndoBtn').addEventListener('click', () => {
+    if (spellcheckOriginalText !== null) {
+      $('#f_body').value = spellcheckOriginalText;
+      toast('되돌렸습니다');
     }
-    pendingSpellcheckText = null;
-    $('#spellcheckPreviewField').style.display = 'none';
-  });
-  $('#spellcheckCancelBtn').addEventListener('click', () => {
-    pendingSpellcheckText = null;
+    spellcheckOriginalText = null;
     $('#spellcheckPreviewField').style.display = 'none';
   });
   $('#pi_cancelBtn').addEventListener('click', () => closePhotoImport());
