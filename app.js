@@ -609,6 +609,7 @@ function openEditor(entry) {
   state.editingId = entry ? entry.id : null;
   state.editingType = editType;
   if (entry) selectedBookCover = entry.coverUrl || null;
+  $('#spellcheckPreviewField').style.display = 'none';
   $('#editorTitle').textContent = entry ? '기록 수정' : (isReading ? '새 독서노트' : '오늘의 기록');
   $('#f_date').value = entry ? entry.date : todayISO();
   $('#f_title').value = entry ? (entry.title || '') : '';
@@ -825,6 +826,48 @@ function runSpellCheck(text) {
     .replace(/\n{3,}/g, '\n\n');
   if (result !== beforeSpacing) count++;
   return { text: result, count };
+}
+
+// 원문과 고친 글을 글자 단위로 비교(LCS)해서, 새로 추가되거나 바뀐 부분만
+// <mark>로 표시한 미리보기 HTML을 만든다. 너무 긴 글은 성능을 위해 생략.
+function diffChars(oldStr, newStr) {
+  const n = oldStr.length, m = newStr.length;
+  if (n * m > 3_000_000) return null; // 너무 길면 세밀한 대조는 건너뜀
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = oldStr[i - 1] === newStr[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  const ops = [];
+  let i = n, j = m;
+  while (i > 0 && j > 0) {
+    if (oldStr[i - 1] === newStr[j - 1]) { ops.push({ type: 'equal', ch: newStr[j - 1] }); i--; j--; }
+    else if (dp[i - 1][j] >= dp[i][j - 1]) { ops.push({ type: 'delete', ch: oldStr[i - 1] }); i--; }
+    else { ops.push({ type: 'insert', ch: newStr[j - 1] }); j--; }
+  }
+  while (i > 0) { ops.push({ type: 'delete', ch: oldStr[i - 1] }); i--; }
+  while (j > 0) { ops.push({ type: 'insert', ch: newStr[j - 1] }); j--; }
+  ops.reverse();
+  return ops;
+}
+
+function buildSpellcheckPreviewHtml(oldStr, newStr) {
+  const ops = diffChars(oldStr, newStr);
+  if (!ops) return escapeHtml(newStr); // 대조 생략된 경우 그냥 결과만 보여줌
+  let html = '', buffer = '', mode = null;
+  const flush = () => {
+    if (!buffer) return;
+    html += mode === 'insert' ? `<mark>${escapeHtml(buffer)}</mark>` : escapeHtml(buffer);
+    buffer = '';
+  };
+  for (const op of ops) {
+    if (op.type === 'delete') continue; // 지워진 예전 글자는 미리보기에 안 보여줌
+    if (op.type !== mode) { flush(); mode = op.type; }
+    buffer += op.ch;
+  }
+  flush();
+  return html;
 }
 
 function renderStars() {
@@ -1390,12 +1433,26 @@ function wireEvents() {
   setupAutocomplete('#f_author', '#authorAcList', () => uniqueSorted(e => e.author));
 
   $('#openPhotoImportBtn').addEventListener('click', openPhotoImport);
+  let pendingSpellcheckText = null;
   $('#spellcheckBtn').addEventListener('click', () => {
     const before = $('#f_body').value;
     const { text, count } = runSpellCheck(before);
     if (count === 0) { toast('고칠 부분을 찾지 못했습니다'); return; }
-    $('#f_body').value = text;
-    toast(`${count}곳을 고쳤습니다`);
+    pendingSpellcheckText = text;
+    $('#spellcheckPreview').innerHTML = buildSpellcheckPreviewHtml(before, text);
+    $('#spellcheckPreviewField').style.display = 'block';
+  });
+  $('#spellcheckApplyBtn').addEventListener('click', () => {
+    if (pendingSpellcheckText !== null) {
+      $('#f_body').value = pendingSpellcheckText;
+      toast('적용했습니다');
+    }
+    pendingSpellcheckText = null;
+    $('#spellcheckPreviewField').style.display = 'none';
+  });
+  $('#spellcheckCancelBtn').addEventListener('click', () => {
+    pendingSpellcheckText = null;
+    $('#spellcheckPreviewField').style.display = 'none';
   });
   $('#pi_cancelBtn').addEventListener('click', () => closePhotoImport());
   $('#photoImportOverlay').addEventListener('click', (e) => { if (e.target.id === 'photoImportOverlay') closePhotoImport(); });
