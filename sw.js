@@ -1,4 +1,4 @@
-const CACHE = 'rb-cache-v29';
+const CACHE = 'rb-cache-v30';
 const CORE = ['./index.html', './app.js', './manifest.json'];
 
 self.addEventListener('install', (e) => {
