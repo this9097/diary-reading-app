@@ -1359,6 +1359,33 @@ function fixSpacingRules(text) {
     return m;
   });
 
+  // 4) 조사가 명사와 떨어져 있는 경우 → 붙여쓰기 (예: "외모 가" → "외모가", "마음 은" → "마음은")
+  //    조사는 항상 앞말에 붙여 쓰는 게 원칙이라, 아래 조사들 앞에 공백이 있으면 제거한다.
+  //    (을/를/는/은/의/에서/에게/까지/부터/처럼/만큼/이나/보다 는 다른 뜻으로 잘 안 쓰여서 안전함)
+  //    단, 바로 앞 글자가 이미 조사(가/이/을/를/은/는/의)라면 그건 앞 단어에 이미 붙어 끝난 것이고
+  //    뒤에 오는 건 완전히 새로운 단어일 뿐이므로(예: "사람이 가장" → 절대 붙이면 안 됨) 건드리지 않는다.
+  const PARTICLE_CHARS = new Set(['가', '이', '을', '를', '은', '는', '의']);
+  text = text.replace(/([가-힣]) (을|를|는|은|의|에서|에게|까지|부터|처럼|만큼|이나|보다)/g, (m, prev, particle) => {
+    if (PARTICLE_CHARS.has(prev)) return m;
+    count++;
+    return `${prev}${particle}`;
+  });
+
+  // "가"는 받침 없는 명사 뒤에서만, "이"는 받침 있는 명사 뒤에서만 조사(또는 "이다"의 "이")로 붙는다.
+  // 단, "~에 가다/가서/가자"처럼 진짜 '가다' 동사인 경우와, 앞 글자가 이미 조사인 경우는 건드리지 않는다.
+  text = text.replace(/([가-힣]) (가|이)/g, (m, prev, particle, offset, full) => {
+    if (PARTICLE_CHARS.has(prev)) return m;
+    const f = hangulFinal(prev);
+    if (particle === '가' && f !== FINAL_NONE) return m;
+    if (particle === '이' && f === FINAL_NONE) return m;
+    if (particle === '가') {
+      const twoBefore = full.slice(Math.max(0, offset - 1), offset + 1); // prev 포함 2글자(으로/까지/부터/에서 판별용)
+      if (prev === '에' || prev === '로' || ['으로', '까지', '부터', '에서'].includes(twoBefore)) return m;
+    }
+    count++;
+    return `${prev}${particle}`;
+  });
+
   return { text, count };
 }
 
