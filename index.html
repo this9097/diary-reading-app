@@ -1326,9 +1326,51 @@ const KOREAN_TYPO_FIXES = [
 const _fixMap = new Map();
 KOREAN_TYPO_FIXES.forEach(([a, b]) => { if (a && b && a !== b) _fixMap.set(a, b); });
 
+// 한글 음절의 받침(종성)을 계산한다. 완성형 한글이 아니면 -1.
+// 유니코드 한글 음절 = (초성*21 + 중성)*28 + 종성 + 0xAC00. 종성 인덱스 0=받침없음.
+function hangulFinal(ch) {
+  if (!ch) return -1;
+  const code = ch.charCodeAt(0) - 0xAC00;
+  if (code < 0 || code > 11171) return -1;
+  return code % 28;
+}
+const FINAL_NONE = 0, FINAL_L = 8, FINAL_N = 4; // ㄹ받침, ㄴ받침
+
+// 문법적으로 확실한 띄어쓰기 규칙 3가지 — 받침을 직접 분석해서 판단하므로
+// 특정 단어 사전에 의존하지 않고 어떤 동사에도 두루 적용된다.
+function fixSpacingRules(text) {
+  let count = 0;
+
+  // 1) "~ㄹ/을 + 수 + 있/없" → "~ㄹ 수 있/없다" (예: 할수있다 → 할 수 있다, 갈수없다 → 갈 수 없다)
+  text = text.replace(/([가-힣])수(있|없)/g, (m, prev, next) => {
+    if (hangulFinal(prev) === FINAL_L) { count++; return `${prev} 수 ${next}`; }
+    return m;
+  });
+
+  // 2) "안" + 되/돼/된/됨/됩 (부정 표현) → 띄어쓰기 (예: 안되다 → 안 되다, 안돼요 → 안 돼요)
+  //    "안됐다"(안쓰럽다는 뜻의 굳어진 표현)는 건드리지 않는다.
+  text = text.replace(/안(되|돼|된|됨|됩)/g, (m, next) => { count++; return `안 ${next}`; });
+
+  // 3) 관형형(는/ㄴ·은/ㄹ·을/던) 뒤에 오는 의존명사 "것" → 띄어쓰기
+  //    (예: 하는것 → 하는 것, 먹은것 → 먹은 것, 할것 → 할 것, 하던것 → 하던 것)
+  text = text.replace(/([가-힣])것/g, (m, prev) => {
+    const f = hangulFinal(prev);
+    if (f === FINAL_L || f === FINAL_N || prev === '는' || prev === '던') { count++; return `${prev} 것`; }
+    return m;
+  });
+
+  return { text, count };
+}
+
 function runSpellCheck(text) {
   let result = text;
   let count = 0;
+
+  // 가장 중요하게 다뤄야 할 부분: 띄어쓰기 규칙부터 먼저 적용
+  const spacingResult = fixSpacingRules(result);
+  result = spacingResult.text;
+  count += spacingResult.count;
+
   for (const [wrong, right] of _fixMap.entries()) {
     if (result.includes(wrong)) {
       const n = result.split(wrong).length - 1;
