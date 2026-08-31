@@ -856,14 +856,17 @@ function buildSpellcheckPreviewHtml(oldStr, newStr) {
   const ops = diffChars(oldStr, newStr);
   if (!ops) return escapeHtml(newStr); // 대조 생략된 경우 그냥 결과만 보여줌
   let html = '', buffer = '', mode = null;
+  let markNextChar = false; // 글자가 삭제만 된 경우(예: 공백 제거), 그 자리에 남은 다음 글자를 표시해서 보여준다
   const flush = () => {
     if (!buffer) return;
     html += mode === 'insert' ? `<mark>${escapeHtml(buffer)}</mark>` : escapeHtml(buffer);
     buffer = '';
   };
   for (const op of ops) {
-    if (op.type === 'delete') continue; // 지워진 예전 글자는 미리보기에 안 보여줌
-    if (op.type !== mode) { flush(); mode = op.type; }
+    if (op.type === 'delete') { markNextChar = true; continue; }
+    const effectiveType = markNextChar ? 'insert' : op.type;
+    markNextChar = false;
+    if (effectiveType !== mode) { flush(); mode = effectiveType; }
     buffer += op.ch;
   }
   flush();
