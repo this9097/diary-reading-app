@@ -2069,11 +2069,11 @@ function wireEvents() {
 
   function countMarks(html) { return (html.match(/<mark>/g) || []).length; }
 
-  async function fetchNaverSpellcheck(text) {
+  async function fetchJsonSpellcheck(endpoint, text, timeoutMs) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 9000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch('/api/spellcheck?text=' + encodeURIComponent(text), { signal: controller.signal });
+      const res = await fetch(endpoint + '?text=' + encodeURIComponent(text), { signal: controller.signal });
       clearTimeout(timer);
       if (!res.ok) return null;
       const data = await res.json();
@@ -2081,7 +2081,7 @@ function wireEvents() {
       return data.correctedText;
     } catch (e) {
       clearTimeout(timer);
-      return null; // 네트워크 오류/타임아웃/차단 등 — 아래에서 자체 규칙 검사로 넘어감
+      return null; // 네트워크 오류/타임아웃/차단/키 미설정 등 — 다음 단계로 넘어감
     }
   }
 
@@ -2094,15 +2094,21 @@ function wireEvents() {
     btn.disabled = true;
     btn.innerHTML = '검사 중…';
 
-    // 1) 먼저 네이버 맞춤법 검사(서버 경유)를 시도 — 실패하면 자체 규칙 기반으로 자동 전환
+    // 1) Claude(AI) 교정 시도 → 2) 실패 시 네이버 맞춤법 검사 → 3) 그마저 실패하면 자체 규칙 검사
     let text = null, source = null;
-    const naverResult = await fetchNaverSpellcheck(before);
-    if (naverResult && naverResult.trim() && naverResult !== before) {
-      text = naverResult;
-      source = 'naver';
+    const aiResult = await fetchJsonSpellcheck('/api/ai-spellcheck', before, 15000);
+    if (aiResult && aiResult !== before) {
+      text = aiResult;
+      source = 'ai';
     } else {
-      const r = runSpellCheck(before);
-      if (r.count > 0) { text = r.text; source = 'local'; }
+      const naverResult = await fetchJsonSpellcheck('/api/spellcheck', before, 9000);
+      if (naverResult && naverResult !== before) {
+        text = naverResult;
+        source = 'naver';
+      } else {
+        const r = runSpellCheck(before);
+        if (r.count > 0) { text = r.text; source = 'local'; }
+      }
     }
 
     btn.disabled = false;
@@ -2117,7 +2123,8 @@ function wireEvents() {
     $('#f_body').value = text; // 바로 적용
     $('#spellcheckPreview').innerHTML = previewHtml;
     $('#spellcheckPreviewField').style.display = 'block';
-    toast(`${count}곳 고쳤습니다${source === 'naver' ? ' (네이버 맞춤법 검사)' : ''}`);
+    const sourceLabel = source === 'ai' ? ' (AI 교정)' : source === 'naver' ? ' (네이버 맞춤법 검사)' : '';
+    toast(`${count}곳 고쳤습니다${sourceLabel}`);
   });
   $('#spellcheckUndoBtn').addEventListener('click', () => {
     if (spellcheckOriginalText !== null) {
