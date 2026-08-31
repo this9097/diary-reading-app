@@ -802,6 +802,7 @@ function fixSpacingRules(text) {
 }
 
 function runSpellCheck(text) {
+  if (!text.trim()) return { text, count: 0 };
   let result = text;
   let count = 0;
 
@@ -1439,6 +1440,7 @@ function wireEvents() {
   let spellcheckOriginalText = null;
   $('#spellcheckBtn').addEventListener('click', () => {
     const before = $('#f_body').value;
+    if (!before.trim()) { toast('내용을 먼저 입력해주세요'); return; }
     const { text, count } = runSpellCheck(before);
     if (count === 0) { toast('고칠 부분을 찾지 못했습니다'); return; }
     spellcheckOriginalText = before;
