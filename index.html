@@ -2066,16 +2066,58 @@ function wireEvents() {
 
   $('#openPhotoImportBtn').addEventListener('click', openPhotoImport);
   let spellcheckOriginalText = null;
-  $('#spellcheckBtn').addEventListener('click', () => {
+
+  function countMarks(html) { return (html.match(/<mark>/g) || []).length; }
+
+  async function fetchNaverSpellcheck(text) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 9000);
+    try {
+      const res = await fetch('/api/spellcheck?text=' + encodeURIComponent(text), { signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data || typeof data.correctedText !== 'string' || !data.correctedText.trim()) return null;
+      return data.correctedText;
+    } catch (e) {
+      clearTimeout(timer);
+      return null; // 네트워크 오류/타임아웃/차단 등 — 아래에서 자체 규칙 검사로 넘어감
+    }
+  }
+
+  $('#spellcheckBtn').addEventListener('click', async () => {
     const before = $('#f_body').value;
     if (!before.trim()) { toast('내용을 먼저 입력해주세요'); return; }
-    const { text, count } = runSpellCheck(before);
+
+    const btn = $('#spellcheckBtn');
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '검사 중…';
+
+    // 1) 먼저 네이버 맞춤법 검사(서버 경유)를 시도 — 실패하면 자체 규칙 기반으로 자동 전환
+    let text = null, source = null;
+    const naverResult = await fetchNaverSpellcheck(before);
+    if (naverResult && naverResult.trim() && naverResult !== before) {
+      text = naverResult;
+      source = 'naver';
+    } else {
+      const r = runSpellCheck(before);
+      if (r.count > 0) { text = r.text; source = 'local'; }
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = originalLabel;
+
+    if (text === null) { toast('고칠 부분을 찾지 못했습니다'); return; }
+    const previewHtml = buildSpellcheckPreviewHtml(before, text);
+    const count = countMarks(previewHtml);
     if (count === 0) { toast('고칠 부분을 찾지 못했습니다'); return; }
+
     spellcheckOriginalText = before;
     $('#f_body').value = text; // 바로 적용
-    $('#spellcheckPreview').innerHTML = buildSpellcheckPreviewHtml(before, text);
+    $('#spellcheckPreview').innerHTML = previewHtml;
     $('#spellcheckPreviewField').style.display = 'block';
-    toast(`${count}곳 고쳤습니다`);
+    toast(`${count}곳 고쳤습니다${source === 'naver' ? ' (네이버 맞춤법 검사)' : ''}`);
   });
   $('#spellcheckUndoBtn').addEventListener('click', () => {
     if (spellcheckOriginalText !== null) {
