@@ -1231,7 +1231,12 @@ function openEditor(entry) {
   $('#deleteEntryBtn').style.display = entry ? 'block' : 'none';
   $('#editorOverlay').classList.add('show');
   pushBackGuard('editorOverlay');
-  setTimeout(() => $('#f_title').focus(), 50);
+  // 수정하는 경우(제목은 이미 채워져 있음)는 바로 본문으로, 새로 쓰는 경우는 제목부터
+  if (entry) {
+    setTimeout(() => { const b = $('#f_body'); b.focus(); b.setSelectionRange(b.value.length, b.value.length); }, 50);
+  } else {
+    setTimeout(() => $('#f_title').focus(), 50);
+  }
 }
 function closeEditor() {
   $('#editorOverlay').classList.remove('show');
